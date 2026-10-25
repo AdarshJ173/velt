@@ -1,5 +1,6 @@
 //! Process injection and output redaction for `velt run` and the MCP runner.
 
+use std::ffi::OsString;
 use std::io::{self, IsTerminal};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -78,26 +79,44 @@ pub fn execute(_cli: &Cli, args: &RunArgs) -> Result<i32> {
     let vault_path = context::discover_vault(_cli.vault.clone())?;
     let (vault, _key) = context::open_vault(&vault_path)?;
     let prepared = prepare(&vault, args.lease.as_deref())?;
+    execute_prepared(&args.command, args.redact, prepared, &[])
+}
 
-    let mut command = Command::new(&args.command[0]);
-    command.args(&args.command[1..]);
-    inject(&mut command, &prepared);
+/// Execute an already-resolved environment. Used by `velt run` and the
+/// headless CI runner. `remove_env` is applied before vault values so CI
+/// bootstrap credentials (identity key, SSH passphrase) never reach the child.
+pub fn execute_prepared(
+    argv: &[OsString],
+    redact_mode: RedactMode,
+    prepared: Prepared,
+    remove_env: &[&str],
+) -> Result<i32> {
+    if argv.is_empty() {
+        return Err(CliError::msg("no command provided"));
+    }
 
-    let redact_output = should_redact(args.redact);
+    let mut process = Command::new(&argv[0]);
+    process.args(&argv[1..]);
+    for name in remove_env {
+        process.env_remove(name);
+    }
+    inject(&mut process, &prepared);
+
+    let redact_output = should_redact(redact_mode);
     if redact_output {
-        command
+        process
             .stdin(Stdio::inherit())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
     } else {
-        command
+        process
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
     }
 
-    let program = args.command[0].to_string_lossy().into_owned();
-    let mut child = command.spawn().map_err(|err| spawn_error(&program, err))?;
+    let program = argv[0].to_string_lossy().into_owned();
+    let mut child = process.spawn().map_err(|err| spawn_error(&program, err))?;
     let signals = SignalForwarder::install(child.id());
 
     let (stdout_thread, stderr_thread) = if redact_output {

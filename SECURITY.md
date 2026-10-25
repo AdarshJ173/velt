@@ -49,6 +49,8 @@ These are documented boundaries, not vulnerabilities:
   required for line-level Git merging;
 - a user who commits a local `.velt.vault` expecting teammates to decrypt it
   without the relay or the owner's keychain;
+- a compromised CI runner, build log, or CI platform secret store reading the
+  bootstrap identity/SSH key; use a dedicated runner identity;
 - denial of service against a self-hosted relay with no rate limiting/WAF;
 - physical attacks, cold-boot attacks, or compromised OS/keychain login;
 - compliance claims. There is no third-party audit, SOC 2, ISO 27001, or

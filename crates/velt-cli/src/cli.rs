@@ -88,6 +88,8 @@ pub enum Command {
     Team(TeamArgs),
     /// Bind, push, pull and watch team environments.
     Sync(SyncArgs),
+    /// Run a command with a team environment fetched headlessly (CI).
+    Ci(CiArgs),
     /// Invite a teammate to the team bound to this vault.
     Share(ShareArgs),
     /// Mint a one-time browser link for the team dashboard.
@@ -458,6 +460,53 @@ pub enum SyncCommand {
     Status,
     /// Stream team change events over WebSocket.
     Watch,
+}
+
+#[derive(Debug, Args)]
+pub struct CiArgs {
+    #[command(subcommand)]
+    pub command: CiCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CiCommand {
+    /// Fetch a team environment without a local vault or keychain writes.
+    Run(CiRunArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CiRunArgs {
+    /// Team whose environment should be injected.
+    #[arg(long)]
+    pub team: Uuid,
+
+    /// Environment name, e.g. production.
+    #[arg(long, alias = "env", value_name = "ENV")]
+    pub environment: String,
+
+    /// Relay base URL (or VELT_SERVER_URL).
+    #[arg(long, env = "VELT_SERVER_URL")]
+    pub server: Option<String>,
+
+    /// Registered CI username (or VELT_USERNAME).
+    #[arg(long, env = "VELT_USERNAME")]
+    pub username: Option<String>,
+
+    /// Ed25519 SSH private key path (or VELT_SSH_KEY).
+    #[arg(long, env = "VELT_SSH_KEY", value_name = "PATH")]
+    pub ssh_key: Option<PathBuf>,
+
+    /// 32-byte X25519 identity private key in hex (or VELT_IDENTITY_KEY).
+    #[arg(long, env = "VELT_IDENTITY_KEY", hide_env_values = true)]
+    pub identity_key: Option<String>,
+
+    /// Redaction policy for child stdout/stderr.
+    #[arg(long, value_enum, default_value_t = RedactMode::Auto)]
+    pub redact: RedactMode,
+
+    /// Command and arguments (use `--` before the command).
+    #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<OsString>,
 }
 
 #[derive(Debug, Args)]

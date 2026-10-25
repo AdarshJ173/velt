@@ -23,6 +23,7 @@ Supported version: `0.1.x` (pre-1.0; security fixes land on `main`).
 - **No deletion or rollback detection.** A line-oriented vault authenticates each present entry, not the set of entries or the file's age. An attacker with write access can remove an entry or restore an older vault without a cryptographic error. Use signed commits, a trusted remote, filesystem permissions, and relay audit history.
 - **Deterministic ciphertext leaks equality.** AES-SIV with deterministic nonces means identical entries produce identical ciphertext and changes are visible. This is the tradeoff for line-level Git merges. Key names are clear text by design.
 - **A committed vault is not a shared team vault.** The local file is encrypted under the local OS-keychain master key. Team members cannot decrypt a copied `.velt.vault`; team sharing uses the relay's E2EE blobs and sealed team keys.
+- **CI bootstrap credentials are plaintext in the runner.** `velt ci run` reads `VELT_IDENTITY_KEY`, `VELT_SSH_KEY_CONTENT`/`VELT_SSH_KEY` and an SSH passphrase from the environment. They are removed from the child environment, but the CI platform, its logs and anyone who can read its secrets can read them. Use a dedicated runner identity and rotate it. The team key stays in memory and is not written to the keychain.
 - **No process sandbox.** Secrets are present in the child environment. Same-user processes can read `/proc/<pid>/environ` on Linux, inspect process memory, or attach debuggers. A child can write secrets to files or the network.
 - **Redaction is best-effort.** It catches the injected value and common encodings in captured stdout/stderr. It cannot catch arbitrary transforms (hashing, chunking, encryption), values shorter than 4 bytes, values longer than 64 KiB, or output that never goes through the pipe.
 - **Revocation is not retroactive.** A removed member may retain old ciphertext and team keys. Rotate the team key.
@@ -44,6 +45,7 @@ Supported version: `0.1.x` (pre-1.0; security fixes land on `main`).
 | Network attacker | Intercepts HTTP | Deploy TLS; ciphertext remains confidential even without it, but tokens/metadata need TLS |
 | Removed teammate | Retains old keys/ciphertext | Relay revocation + `velt team rotate-key` |
 | Malicious agent | Runs commands, prints output | Lease scoping, output redaction, no value APIs, human-in-loop requests, guardrail files |
+| Compromised CI runner / build log | Reads runner environment, child process | Dedicated identity, bootstrap env stripped from child, short-lived session, relay revocation; the runner itself is trusted |
 | Supply-chain attacker | Replaces binary/build | Not solved in-repo; use signed reproducible builds and pinned toolchains for production |
 
 ## Crypto choices

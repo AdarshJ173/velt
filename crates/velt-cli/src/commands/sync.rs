@@ -31,7 +31,7 @@ pub fn execute(cli: &Cli, args: &SyncArgs) -> Result<i32> {
     }
 }
 
-fn validate_environment(input: &str) -> Result<String> {
+pub(crate) fn validate_environment(input: &str) -> Result<String> {
     let environment = input.trim().to_ascii_lowercase();
     if environment.is_empty() || environment.len() > 32 {
         return Err(CliError::msg("environment must be 1..=32 characters"));

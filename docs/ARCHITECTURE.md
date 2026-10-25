@@ -50,6 +50,15 @@ flowchart TB
 - Writes use a temporary file in the same directory, `fsync`, atomic rename, and 0600 permissions on Unix.
 - `VaultLock` provides an advisory lock in the OS temp directory, keyed by the canonical vault path, for read-modify-write commands.
 
+### Headless CI
+
+`velt ci run` uses the same relay data path without a local vault: it
+authenticates with a CI-only SSH key, opens the sealed team-key envelope with a
+CI-only X25519 identity, fetches the encrypted environment, decrypts it in
+memory, and calls the same `run::execute_prepared` child pipeline. Bootstrap
+variables are removed from the child. The team key and session token are not
+written to the OS keychain.
+
 ### Process injection
 
 `velt run`:

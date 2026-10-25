@@ -41,6 +41,7 @@ Velt is a local-first, zero-knowledge secret execution harness. Secrets are stor
 - `velt run --lease <token> -- <cmd>` — inject only lease-allowed keys and redact them.
 - `velt request KEY --reason "..." --wait --json` — request a missing secret from a human without exposing it in chat.
 - `velt mcp` — MCP server over stdio (tools: velt_inspect, velt_audit, velt_run, velt_lease_create, velt_request_secret, velt_request_status).
+- `velt ci run --team UUID --env production -- <cmd>` — headless CI injection with a CI-only identity; no local vault or keychain.
 
 ## Security invariants
 - Never read or write plaintext `.env` files.

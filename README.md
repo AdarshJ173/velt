@@ -40,6 +40,7 @@ visible in the line-oriented vault file. See [docs/SECURITY.md](docs/SECURITY.md
 | TUI | ratatui editor with masking, reveal, add/edit/delete, dirty-state confirmation, explicit save |
 | Agent harness | `--llm-docs`, MCP stdio server, scoped HMAC leases, human-in-the-loop secret requests, guardrail injection into agent rule files |
 | Team sync | SSH Ed25519 challenge auth, X25519 + HKDF + ChaCha20-Poly1305 sealed team keys, opaque encrypted blobs, optimistic versions, Postgres LISTEN/NOTIFY WebSocket events |
+| Headless CI | `velt ci run` fetches a team environment with a CI-only identity, injects one child, scrubs bootstrap credentials, and leaves no vault/team key on the runner |
 | Governance | Owner/admin/developer/CI-bot roles, environment grants, audit trail, member revocation, client-driven key rotation |
 | Dashboard | Server-rendered team/member/environment/audit views, one-time CLI login, CSRF protection, audit CSV, revocation |
 | Deployment | Docker image, compose stack, migrations embedded in the binary, health/readiness endpoints |
@@ -117,6 +118,7 @@ velt schema                     # alias for inspect
 velt edit
 velt recovery create [--threshold 2] [--shares 3] [--out-dir DIR]
 velt recovery restore SHARE_FILE...
+velt ci run --team UUID --env production -- COMMAND...
 ```
 
 `--vault PATH` / `VELT_VAULT` override discovery. Without it, Velt walks upward from the current directory to find `.velt.vault`.
@@ -293,6 +295,7 @@ flowchart LR
 - [docs/SYNC_PROTOCOL.md](docs/SYNC_PROTOCOL.md)
 - [docs/AGENT.md](docs/AGENT.md)
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- [docs/CI.md](docs/CI.md)
 
 ---
 
@@ -307,7 +310,7 @@ crates/velt-core     vault format, AEAD, keychain, audit, recovery, leases, E2EE
 crates/velt-cli      CLI, TUI, redaction, MCP, requests, sync client, dashboard link
 crates/velt-server   Axum relay, PostgreSQL schema, auth, RBAC, events, dashboard
 deploy/              Dockerfile, compose stack
-docs/                architecture, format, protocol, security, deployment, agents
+docs/                architecture, format, protocol, security, deployment, CI, agents
 ```
 
 ---
@@ -317,7 +320,7 @@ docs/                architecture, format, protocol, security, deployment, agent
 These are deliberate boundaries of the current implementation, not hidden stubs:
 
 - No hosted SaaS, billing, seat metering, OIDC/SAML SSO, SCIM, Jira/VPN ABAC, or Slack approval workflow.
-- No GitHub Actions/Vercel secret-push integrations. `velt run` is the CI injection primitive; machine-token bootstrap for headless CI is not implemented.
+- No provider API that pushes secrets into GitHub/Vercel environment stores. `velt ci run` is the supported primitive: secrets are injected into the build process and never written to the provider. See [docs/CI.md](docs/CI.md).
 - The relay uses PostgreSQL `LISTEN/NOTIFY` for fan-out instead of Redis Pub/Sub. This keeps the stateless-server design without another datastore.
 - Redaction is best-effort and documented above.
 - No memory locking (`mlock`) or process sandboxing.

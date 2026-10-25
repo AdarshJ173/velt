@@ -2,6 +2,7 @@
 
 pub mod audit;
 pub mod auth;
+pub mod ci;
 pub mod dashboard;
 pub mod edit;
 pub mod init;
@@ -40,6 +41,7 @@ pub fn dispatch(cli: &Cli) -> Result<i32> {
         Command::Auth(args) => auth::execute(cli, args),
         Command::Team(args) => team::execute(cli, args),
         Command::Sync(args) => sync::execute(cli, args),
+        Command::Ci(args) => ci::execute(cli, args),
         Command::Share(args) => share::execute(cli, args),
         Command::Dashboard => dashboard::execute(cli),
     }

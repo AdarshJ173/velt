@@ -17,6 +17,10 @@
 - CI: locked builds, no-unwrap/expect production lints, reproducible Linux
   release build check, keyless Sigstore signing and SLSA-style provenance
   requests in the release workflow.
+- `velt ci run`: headless team-environment injection with a CI-only X25519
+  identity and SSH key. No local vault, no keychain writes, no persisted team
+  key; bootstrap credentials are stripped from the child. GitHub Actions and
+  Vercel usage documented in `docs/CI.md`.
 
 ## 0.1.0
 

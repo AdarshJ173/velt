@@ -15,6 +15,7 @@ use serde_json::Value;
 use ssh_key::{Algorithm, LineEnding, PrivateKey};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
+use velt_core::sync::TeamIdentity;
 use velt_server::config::Config;
 use velt_server::events::{self, EventBus};
 use velt_server::{build_app, connect_database, run_migrations, AppState};
@@ -119,14 +120,22 @@ fn cli_sync_end_to_end() {
     let root = TempDir::new().unwrap();
     let alice_dir = root.path().join("alice");
     let bob_dir = root.path().join("bob");
+    let ci_dir = root.path().join("ci");
     let alice_config = root.path().join("config-alice");
     let bob_config = root.path().join("config-bob");
+    let ci_config = root.path().join("config-ci");
     fs::create_dir_all(&alice_dir).unwrap();
     fs::create_dir_all(&bob_dir).unwrap();
     fs::create_dir_all(&alice_config).unwrap();
     fs::create_dir_all(&bob_config).unwrap();
+    fs::create_dir_all(&ci_dir).unwrap();
+    fs::create_dir_all(&ci_config).unwrap();
     let alice_ssh = make_ssh_key(root.path(), "alice");
     let bob_ssh = make_ssh_key(root.path(), "bob");
+    let ci_ssh = make_ssh_key(root.path(), "ci");
+    let ci_identity = TeamIdentity::generate().unwrap();
+    let ci_identity_hex = hex::encode(ci_identity.secret());
+    let ci_ssh_content = fs::read_to_string(&ci_ssh).unwrap();
 
     // Register and authenticate both users.
     let mut alice = velt(&alice_config);
@@ -159,6 +168,23 @@ fn cli_sync_end_to_end() {
     ]);
     let value = run_json(&mut bob);
     assert_eq!(value["username"], "bob");
+
+    // A CI identity is registered with an explicit X25519 key, not keychain
+    // state, so a headless runner can decrypt its envelope later.
+    let mut ci = velt(&ci_config);
+    ci.env("VELT_IDENTITY_KEY", &ci_identity_hex).args([
+        "--json",
+        "auth",
+        "register",
+        "--server",
+        &base,
+        "--username",
+        "ci",
+        "--ssh-key",
+        ci_ssh.to_str().unwrap(),
+    ]);
+    let value = run_json(&mut ci);
+    assert_eq!(value["username"], "ci");
 
     // Alice creates a team and a vault, then binds and pushes.
     let mut alice = velt(&alice_config);
@@ -265,6 +291,87 @@ fn cli_sync_end_to_end() {
     ]);
     let invited = run_json(&mut alice);
     assert_eq!(invited["member"]["username"], "bob");
+
+    let mut alice = velt(&alice_config);
+    alice.args([
+        "--json",
+        "team",
+        "invite",
+        "ci",
+        "--team",
+        &team_id,
+        "--env",
+        "production",
+    ]);
+    let invited = run_json(&mut alice);
+    assert_eq!(invited["member"]["username"], "ci");
+
+    // Headless CI: no vault, no keychain writes, bootstrap credentials are
+    // removed from the child, and output is redacted.
+    let mut ci = velt(&ci_config);
+    ci.current_dir(&ci_dir)
+        .env("VELT_IDENTITY_KEY", &ci_identity_hex)
+        .env("VELT_SSH_KEY_CONTENT", &ci_ssh_content)
+        .args([
+            "ci",
+            "run",
+            "--team",
+            &team_id,
+            "--env",
+            "production",
+            "--server",
+            &base,
+            "--username",
+            "ci",
+            "--",
+            "sh",
+            "-c",
+            "printf '%s\n' \"$API_KEY\"; printf '%s\n' \"${VELT_IDENTITY_KEY:-missing}\"; printf '%s\n' \"${VELT_SSH_KEY_CONTENT:-missing}\"",
+        ]);
+    let output = run(&mut ci);
+    assert!(
+        output.status.success(),
+        "ci run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[VELT_REDACTED:API_KEY]"), "{stdout}");
+    assert!(!stdout.contains("alice-secret-123456"), "{stdout}");
+    assert!(
+        stdout.contains("missing"),
+        "identity key leaked to child: {stdout}"
+    );
+    assert!(!ci_dir.join(".velt.vault").exists());
+
+    let mut ci = velt(&ci_config);
+    ci.current_dir(&ci_dir)
+        .env("VELT_IDENTITY_KEY", &ci_identity_hex)
+        .env("VELT_SSH_KEY_CONTENT", &ci_ssh_content)
+        .args([
+            "ci",
+            "run",
+            "--team",
+            &team_id,
+            "--env",
+            "production",
+            "--server",
+            &base,
+            "--username",
+            "ci",
+            "--",
+            "sh",
+            "-c",
+            "exit 7",
+        ]);
+    let output = run(&mut ci);
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "ci run must preserve the child exit code: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(!ci_dir.join(".velt.vault").exists());
 
     let mut bob = velt(&bob_config);
     bob.current_dir(&bob_dir)
