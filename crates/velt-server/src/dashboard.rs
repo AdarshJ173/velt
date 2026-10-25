@@ -319,6 +319,10 @@ async fn team_page(
     .await
     .unwrap_or_default();
     let can_manage = role_rank(&member.role) >= role_rank("admin");
+    let environments: Vec<BlobMetaRow> = environments
+        .into_iter()
+        .filter(|environment| can_manage || util::can_access(&member, &environment.environment))
+        .collect();
     let audits = if can_manage {
         sqlx::query_as::<_, AuditRow>(
             "SELECT a.id, u.username AS actor_username, a.action, a.subject, a.metadata, a.created_at
