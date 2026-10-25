@@ -19,7 +19,7 @@ jobs:
       - name: Install keychain and PostgreSQL test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config gnome-keyring dbus-x11
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config gnome-keyring dbus-x11 libsecret-tools
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -31,7 +31,12 @@ jobs:
       - name: Tests (virtual Secret Service)
         run: |
           dbus-run-session -- bash -c '
-            eval "$(printf "" | gnome-keyring-daemon --unlock --components=secrets 2>/dev/null)" || true
+            set -euo pipefail
+            # --unlock only unlocks an existing login collection. A fresh
+            # headless runner has none, so --login must create it first.
+            printf "ci-test\n" | gnome-keyring-daemon --login --components=secrets
+            # Secret Service creates the default collection on first write.
+            printf seed | secret-tool store --label=velt-ci-seed service velt-ci
             cargo test --workspace --locked
           '
   reproducible:
