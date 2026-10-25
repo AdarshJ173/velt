@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+.DS_Store
+.env
+.env.*
+!.env.example
+envy-recovery-*.txt
+*.vault.lock
+.idea/
+.vscode/

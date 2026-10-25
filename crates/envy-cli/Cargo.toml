@@ -1,0 +1,45 @@
+[package]
+name = "envy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Local-first encrypted environment vault and process injector"
+
+[[bin]]
+name = "envy"
+path = "src/main.rs"
+
+[dependencies]
+envy-core.workspace = true
+clap = { version = "4.6", features = ["derive", "env", "string"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+time.workspace = true
+base64.workspace = true
+hex.workspace = true
+rand.workspace = true
+dirs.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+x25519-dalek.workspace = true
+toml = "0.8"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+tungstenite = { version = "0.30", default-features = false, features = ["rustls-tls-webpki-roots", "handshake"] }
+ratatui = "0.30"
+crossterm = "0.29"
+rpassword = "7.4"
+signal-hook = "0.3"
+ssh-key = { version = "0.6.7", features = ["ed25519", "encryption"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3.14"
+assert_cmd = "2.0"
+predicates = "3.1"
