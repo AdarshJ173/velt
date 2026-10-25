@@ -1,4 +1,4 @@
-//! Error types shared by the envy vault, audit engine and E2EE protocol.
+//! Error types shared by the velt vault, audit engine and E2EE protocol.
 //!
 //! Rules:
 //! - Errors never carry plaintext secret values.
@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-/// Errors returned by the envy core library.
+/// Errors returned by the velt core library.
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("I/O error at {path}: {source}")]
@@ -19,11 +19,11 @@ pub enum CoreError {
         source: io::Error,
     },
 
-    #[error("vault file is not a valid envy vault: {0}")]
+    #[error("vault file is not a valid velt vault: {0}")]
     InvalidVault(String),
 
     #[error(
-        "vault format version {found} is newer than the supported version {supported}; upgrade envy"
+        "vault format version {found} is newer than the supported version {supported}; upgrade velt"
     )]
     UnsupportedVersion { found: u8, supported: u8 },
 

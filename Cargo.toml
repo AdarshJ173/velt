@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/envy-core", "crates/envy-cli", "crates/envy-server"]
+members = ["crates/velt-core", "crates/velt-cli", "crates/velt-server"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,12 +8,12 @@ edition = "2021"
 rust-version = "1.88"
 license = "MIT"
 authors = ["Adarsh Jagannath"]
-repository = "https://github.com/AdarshJ173/envy"
-homepage = "https://github.com/AdarshJ173/envy"
+repository = "https://github.com/AdarshJ173/velt"
+homepage = "https://github.com/AdarshJ173/velt"
 description = "Local-first, zero-config encrypted environment and secret vault for polyglot developers"
 
 [workspace.dependencies]
-envy-core = { path = "crates/envy-core" }
+velt-core = { path = "crates/velt-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"

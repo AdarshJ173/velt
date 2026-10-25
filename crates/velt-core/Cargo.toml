@@ -1,12 +1,12 @@
 [package]
-name = "envy-core"
+name = "velt-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Cryptographic vault, audit engine, recovery and E2EE protocol primitives for envy"
+description = "Cryptographic vault, audit engine, recovery and E2EE protocol primitives for velt"
 
 [dependencies]
 serde.workspace = true

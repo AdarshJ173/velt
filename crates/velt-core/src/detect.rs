@@ -1,6 +1,6 @@
 //! Zero-config project stack detection.
 //!
-//! Detection is advisory: `envy init` uses it to print a short summary and a
+//! Detection is advisory: `velt init` uses it to print a short summary and a
 //! run hint. It never mutates the project and never executes a detected tool.
 
 use std::fs;
@@ -165,15 +165,15 @@ fn detect_node(directory: &Path) -> Option<StackInfo> {
                 _ => "npm run",
             };
             stack.run_hint = Some(if script.is_some() {
-                format!("envy run -- {runner} dev")
+                format!("velt run -- {runner} dev")
             } else {
-                format!("envy run -- {runner} start")
+                format!("velt run -- {runner} start")
             });
         }
     }
 
     if stack.run_hint.is_none() {
-        stack.run_hint = Some("envy run -- npm start".to_owned());
+        stack.run_hint = Some("velt run -- npm start".to_owned());
     }
     Some(stack)
 }
@@ -185,7 +185,7 @@ fn detect_rust(directory: &Path) -> Option<StackInfo> {
     let mut stack = StackInfo::new("Rust");
     stack.package_manager = Some("cargo".to_owned());
     stack.evidence.push("Cargo.toml".to_owned());
-    let mut run_hint = "envy run -- cargo run".to_owned();
+    let mut run_hint = "velt run -- cargo run".to_owned();
     if let Some(contents) = read_limited(&directory.join("Cargo.toml"), 512 * 1024) {
         let has = |needle: &str| contents.contains(needle);
         stack.framework = if has("axum") {
@@ -200,7 +200,7 @@ fn detect_rust(directory: &Path) -> Option<StackInfo> {
             None
         };
         if contents.contains("[[bin]]") {
-            run_hint = "envy run -- cargo run --release".to_owned();
+            run_hint = "velt run -- cargo run --release".to_owned();
         }
     }
     stack.run_hint = Some(run_hint);
@@ -266,10 +266,10 @@ fn detect_python(directory: &Path) -> Option<StackInfo> {
         .map(|(_, name)| (*name).to_owned());
 
     stack.run_hint = Some(match stack.framework.as_deref() {
-        Some("Django") => "envy run -- python manage.py runserver".to_owned(),
-        Some("FastAPI") => "envy run -- uvicorn app.main:app --reload".to_owned(),
-        Some("Flask") => "envy run -- flask --app app run --debug".to_owned(),
-        _ => "envy run -- python main.py".to_owned(),
+        Some("Django") => "velt run -- python manage.py runserver".to_owned(),
+        Some("FastAPI") => "velt run -- uvicorn app.main:app --reload".to_owned(),
+        Some("Flask") => "velt run -- flask --app app run --debug".to_owned(),
+        _ => "velt run -- python main.py".to_owned(),
     });
     Some(stack)
 }
@@ -292,7 +292,7 @@ fn detect_go(directory: &Path) -> Option<StackInfo> {
             None
         };
     }
-    stack.run_hint = Some("envy run -- go run .".to_owned());
+    stack.run_hint = Some("velt run -- go run .".to_owned());
     Some(stack)
 }
 
@@ -303,7 +303,7 @@ fn detect_deno(directory: &Path) -> Option<StackInfo> {
     let mut stack = StackInfo::new("Deno");
     stack.package_manager = Some("deno".to_owned());
     stack.evidence.push("deno.json".to_owned());
-    stack.run_hint = Some("envy run -- deno task dev".to_owned());
+    stack.run_hint = Some("velt run -- deno task dev".to_owned());
     Some(stack)
 }
 
@@ -321,7 +321,7 @@ fn detect_ruby(directory: &Path) -> Option<StackInfo> {
             None
         };
     }
-    stack.run_hint = Some("envy run -- bundle exec rails server".to_owned());
+    stack.run_hint = Some("velt run -- bundle exec rails server".to_owned());
     Some(stack)
 }
 

@@ -105,7 +105,7 @@ pub struct SealedTeamKey {
 }
 
 fn envelope_aad(team_id: &str, epoch: u32, recipient: &str) -> String {
-    format!("envy-team-key-v1|{team_id}|{epoch}|{recipient}")
+    format!("velt-team-key-v1|{team_id}|{epoch}|{recipient}")
 }
 
 /// Encrypt `team_key` for a recipient's X25519 public key.
@@ -133,7 +133,7 @@ pub fn seal_team_key(
     }
 
     let aad = envelope_aad(team_id, epoch, recipient);
-    let hkdf = Hkdf::<Sha256>::new(Some(b"envy-team-key-wrap-salt-v1"), shared.as_bytes());
+    let hkdf = Hkdf::<Sha256>::new(Some(b"velt-team-key-wrap-salt-v1"), shared.as_bytes());
     let mut wrapping_key = Zeroizing::new([0u8; crypto::KEY_LEN]);
     hkdf.expand(aad.as_bytes(), &mut wrapping_key[..])
         .map_err(|_| CoreError::InvalidCrypto("HKDF expansion failed"))?;
@@ -183,7 +183,7 @@ pub fn open_team_key(
         ));
     }
     let aad = envelope_aad(team_id, sealed.epoch, &sealed.recipient);
-    let hkdf = Hkdf::<Sha256>::new(Some(b"envy-team-key-wrap-salt-v1"), shared.as_bytes());
+    let hkdf = Hkdf::<Sha256>::new(Some(b"velt-team-key-wrap-salt-v1"), shared.as_bytes());
     let mut wrapping_key = Zeroizing::new([0u8; crypto::KEY_LEN]);
     hkdf.expand(aad.as_bytes(), &mut wrapping_key[..])
         .map_err(|_| CoreError::InvalidCrypto("HKDF expansion failed"))?;
@@ -332,7 +332,7 @@ impl TeamPayload {
 }
 
 fn blob_aad(team_id: &str, environment: &str) -> String {
-    format!("envy-team-blob-v1|{team_id}|{environment}")
+    format!("velt-team-blob-v1|{team_id}|{environment}")
 }
 
 /// Ciphertext ready to upload to the relay.

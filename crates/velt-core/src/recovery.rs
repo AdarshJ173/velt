@@ -4,7 +4,7 @@
 //! operator deliberately distributes them. A share string contains:
 //!
 //! ```text
-//! envy1.<vault-id-hex>.<threshold>.<total>.<index>.<base32-data>.<checksum>
+//! velt1.<vault-id-hex>.<threshold>.<total>.<index>.<base32-data>.<checksum>
 //! ```
 //!
 //! The data is 32 bytes of a degree `threshold - 1` polynomial evaluated at
@@ -24,7 +24,7 @@ use crate::crypto;
 use crate::error::{CoreError, Result};
 use crate::vault::{MasterKey, VaultId, VAULT_ID_LEN};
 
-const SHARE_PREFIX: &str = "envy1";
+const SHARE_PREFIX: &str = "velt1";
 const MIN_THRESHOLD: u8 = 2;
 const SECRET_LEN: usize = crypto::KEY_LEN;
 
@@ -145,7 +145,7 @@ fn share_checksum(
     data: &[u8],
 ) -> [u8; 8] {
     let mut hasher = Sha256::new();
-    hasher.update(b"envy-recovery-v1");
+    hasher.update(b"velt-recovery-v1");
     hasher.update(vault_id);
     hasher.update([threshold, total, index]);
     hasher.update(data);

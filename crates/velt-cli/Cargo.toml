@@ -1,5 +1,5 @@
 [package]
-name = "envy"
+name = "velt"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,11 +9,11 @@ repository.workspace = true
 description = "Local-first encrypted environment vault and process injector"
 
 [[bin]]
-name = "envy"
+name = "velt"
 path = "src/main.rs"
 
 [dependencies]
-envy-core.workspace = true
+velt-core.workspace = true
 clap = { version = "4.6", features = ["derive", "env", "string"] }
 serde.workspace = true
 serde_json.workspace = true

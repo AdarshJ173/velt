@@ -20,10 +20,10 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::crypto;
 use crate::error::{CoreError, Result};
 
-/// Service name used for every envy credential-store entry.
+/// Service name used for every velt credential-store entry.
 ///
 /// Accounts are namespaced (`vault:<id>`, `team-key:<id>:<epoch>`, ...).
-pub const SERVICE: &str = "dev.envy.vault";
+pub const SERVICE: &str = "dev.velt.vault";
 
 /// Abstract credential store, allowing deterministic tests and embedding.
 pub trait KeyStore: Send + Sync {

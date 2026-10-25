@@ -1,19 +1,19 @@
 [package]
-name = "envy-server"
+name = "velt-server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Zero-knowledge relay server for envy team sync"
+description = "Zero-knowledge relay server for velt team sync"
 
 [lib]
-name = "envy_server"
+name = "velt_server"
 path = "src/lib.rs"
 
 [[bin]]
-name = "envy-server"
+name = "velt-server"
 path = "src/main.rs"
 
 [dependencies]

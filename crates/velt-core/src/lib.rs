@@ -1,4 +1,4 @@
-//! envy-core: cryptography, vault format, audit engine, recovery and the E2EE
+//! velt-core: cryptography, vault format, audit engine, recovery and the E2EE
 //! team protocol.
 //!
 //! Design invariants:

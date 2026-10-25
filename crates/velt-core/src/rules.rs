@@ -1,7 +1,7 @@
 //! Cryptographically signed audit rule packs.
 //!
 //! Built-in heuristics cannot anticipate every credential format. Rule packs
-//! add regular expressions without rebuilding envy:
+//! add regular expressions without rebuilding velt:
 //!
 //! ```json
 //! {

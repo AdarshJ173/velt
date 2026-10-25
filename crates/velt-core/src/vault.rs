@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! offset  size  field
-//! 0       8     magic "ENVYVLT1"
+//! 0       8     magic "VELTVLT1"
 //! 8       1     format version (1)
 //! 9       3     reserved (zero)
 //! 12      16    vault id (random, generated once)
@@ -35,7 +35,7 @@ use crate::crypto;
 use crate::error::{CoreError, Result};
 use crate::secret::SecretValue;
 
-pub const MAGIC: &[u8; 8] = b"ENVYVLT1";
+pub const MAGIC: &[u8; 8] = b"VELTVLT1";
 pub const FORMAT_VERSION: u8 = 1;
 pub const HEADER_LEN: usize = 40;
 pub const VAULT_ID_LEN: usize = 16;
@@ -52,7 +52,7 @@ pub fn now_unix() -> i64 {
     OffsetDateTime::now_utc().unix_timestamp()
 }
 
-/// A 256-bit vault master key. Wiped on drop; never serialized by envy.
+/// A 256-bit vault master key. Wiped on drop; never serialized by velt.
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct MasterKey([u8; crypto::KEY_LEN]);
 
@@ -448,7 +448,7 @@ pub fn parse_header(bytes: &[u8]) -> Result<VaultHeader> {
     }
     if &bytes[..8] != MAGIC {
         return Err(CoreError::InvalidVault(
-            "missing ENVYVLT1 magic bytes".to_owned(),
+            "missing VELTVLT1 magic bytes".to_owned(),
         ));
     }
     let version = bytes[8];
@@ -586,7 +586,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 ///
 /// The lock file lives in the OS temporary directory, keyed by the canonical
 /// vault path, so it never pollutes the project tree. It is not a security
-/// boundary; it prevents two envy commands from losing each other's updates.
+/// boundary; it prevents two velt commands from losing each other's updates.
 pub struct VaultLock {
     _file: File,
 }
@@ -596,7 +596,7 @@ impl VaultLock {
         let canonical = canonical_lock_target(vault_path);
         let digest = crypto::sha256(format!("{}", canonical.display()).as_bytes());
         let lock_path = std::env::temp_dir().join(format!(
-            "envy-{}.lock",
+            "velt-{}.lock",
             hex::encode(&digest[..16])
         ));
         let mut options = OpenOptions::new();
@@ -638,7 +638,7 @@ mod tests {
     }
 
     fn new_vault(dir: &TempDir) -> (Vault, PathBuf) {
-        let path = dir.path().join(".envy.vault");
+        let path = dir.path().join(".velt.vault");
         let mut vault = Vault::new(&path, None).unwrap();
         vault.set("DATABASE_URL", "postgres://localhost/app", None).unwrap();
         vault.set("API_TOKEN", "token-value", None).unwrap();
@@ -691,7 +691,7 @@ mod tests {
     fn truncated_file_is_rejected() {
         let dir = TempDir::new().unwrap();
         let (_, path) = new_vault(&dir);
-        fs::write(&path, b"ENVYVLT1").unwrap();
+        fs::write(&path, b"VELTVLT1").unwrap();
         assert!(matches!(
             Vault::load(&path, &key()),
             Err(CoreError::InvalidVault(_))
@@ -783,7 +783,7 @@ mod tests {
     #[test]
     fn lock_is_reentrant_only_after_drop() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join(".envy.vault");
+        let path = dir.path().join(".velt.vault");
         let lock = VaultLock::acquire(&path).unwrap();
         drop(lock);
         let _again = VaultLock::acquire(&path).unwrap();

@@ -6,8 +6,8 @@
 //! credential store; verification requires only the key and the token.
 //!
 //! This is a *local capability* mechanism, not a sandbox. A lease limits what
-//! `envy run --lease` injects and redacts. Any process running as the same OS
-//! user can still ask envy to mint a different lease; use OS isolation for
+//! `velt run --lease` injects and redacts. Any process running as the same OS
+//! user can still ask velt to mint a different lease; use OS isolation for
 //! stronger boundaries.
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -23,7 +23,7 @@ use crate::vault::now_unix;
 
 type HmacSha256 = Hmac<Sha256>;
 
-pub const LEASE_PREFIX: &str = "envy_lease";
+pub const LEASE_PREFIX: &str = "velt_lease";
 pub const LEASE_VERSION: u32 = 1;
 pub const MAX_LEASE_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 pub const MAX_LEASE_PATTERNS: usize = 64;
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn malformed_tokens_are_rejected() {
         assert!(verify(&secret(), "", &vault_id(), now_unix()).is_err());
-        assert!(verify(&secret(), "envy_lease.a.b", &vault_id(), now_unix()).is_err());
+        assert!(verify(&secret(), "velt_lease.a.b", &vault_id(), now_unix()).is_err());
         assert!(verify(&secret(), "nope", &vault_id(), now_unix()).is_err());
     }
 
