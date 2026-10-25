@@ -174,16 +174,32 @@ fn audit_value(name: &str, value: &str, now: i64, findings: &mut Vec<Finding>) {
         ));
     }
 
+    let recognized = credential_format(trimmed);
     if is_sensitive_name(name)
         && trimmed.chars().count() < 16
         && !is_placeholder(trimmed)
-        && credential_format(trimmed).is_none()
+        && recognized.is_none()
     {
         findings.push(Finding::new(
             Severity::Warning,
             "short_secret",
             name,
             "value is shorter than 16 characters for a sensitive key; use a high-entropy credential",
+        ));
+    }
+
+    if is_sensitive_name(name)
+        && trimmed.chars().count() >= 10
+        && !is_placeholder(trimmed)
+        && recognized.is_none()
+        && !trimmed.contains("://")
+        && shannon_entropy(trimmed) < 2.5
+    {
+        findings.push(Finding::new(
+            Severity::Warning,
+            "low_entropy",
+            name,
+            "value has very low Shannon entropy (repeated or predictable pattern); generate a random credential",
         ));
     }
 
@@ -196,7 +212,7 @@ fn audit_value(name: &str, value: &str, now: i64, findings: &mut Vec<Finding>) {
         ));
     }
 
-    if let Some(kind) = credential_format(trimmed) {
+    if let Some(kind) = recognized {
         findings.push(Finding::new(
             Severity::Info,
             "recognized_credential",
@@ -230,6 +246,25 @@ fn audit_value(name: &str, value: &str, now: i64, findings: &mut Vec<Finding>) {
             ));
         }
     }
+}
+
+/// Shannon entropy in bits per character. Used to flag predictable secrets
+/// such as `aaaaaaaaaaaa` or `abcdabcdabcd`.
+pub fn shannon_entropy(value: &str) -> f64 {
+    if value.is_empty() {
+        return 0.0;
+    }
+    let mut counts: BTreeMap<char, usize> = BTreeMap::new();
+    let mut total = 0usize;
+    for character in value.chars() {
+        *counts.entry(character).or_insert(0) += 1;
+        total += 1;
+    }
+    let total = total as f64;
+    counts.values().fold(0.0, |entropy, count| {
+        let probability = *count as f64 / total;
+        entropy - probability * probability.log2()
+    })
 }
 
 fn is_sensitive_name(name: &str) -> bool {
@@ -611,6 +646,14 @@ mod tests {
     fn short_sensitive_values_warn() {
         let findings = audit(&[("API_TOKEN", "abc")]);
         assert!(findings.iter().any(|finding| finding.code == "short_secret"));
+    }
+
+    #[test]
+    fn entropy_flags_repeated_secrets() {
+        let findings = audit(&[("API_TOKEN", "aaaaaaaaaaaaaaaaaaaa")]);
+        assert!(findings.iter().any(|finding| finding.code == "low_entropy"));
+        assert!(shannon_entropy("aaaaaaaa") < 1.0);
+        assert!(shannon_entropy("aB3xK9mQ2pL7vN4r") > 3.0);
     }
 
     #[test]
