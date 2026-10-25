@@ -41,7 +41,7 @@ flowchart TB
 ### Vault
 
 - One `.velt.vault` per project. Format 2 is a line-oriented UTF-8 file with one AES-256-SIV ciphertext per entry and an independently encrypted team binding.
-- The master key is a random 256-bit value stored in the OS credential store under `vault:<vault-id>`. A 64-byte AES-256-SIV key is derived with HKDF-SHA256.
+- A local vault uses a random 256-bit master key stored under `vault:<vault-id>`; an exported `key_mode team` file uses the team key for the named epoch. A 64-byte AES-256-SIV key is derived with HKDF-SHA256. `velt export` writes the shared file without changing the source vault.
 - Key names, update timestamps, and expiry are clear text but bound as AEAD associated data. Values and the binding are encrypted.
 - Unchanged entries serialize byte-for-byte identically; there is no global revision or checksum line. Disjoint entries merge with ordinary Git line merging; duplicate names or concurrent edits fail closed.
 - Per-entry AEAD authenticates present entries, not the absence of a deleted line. Completeness relies on Git signatures, a trusted remote, or relay version history.

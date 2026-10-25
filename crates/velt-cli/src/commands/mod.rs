@@ -5,6 +5,7 @@ pub mod auth;
 pub mod ci;
 pub mod dashboard;
 pub mod edit;
+pub mod export;
 pub mod init;
 pub mod inspect;
 pub mod lease;
@@ -44,5 +45,6 @@ pub fn dispatch(cli: &Cli) -> Result<i32> {
         Command::Ci(args) => ci::execute(cli, args),
         Command::Share(args) => share::execute(cli, args),
         Command::Dashboard => dashboard::execute(cli),
+        Command::Export(args) => export::execute(cli, args),
     }
 }

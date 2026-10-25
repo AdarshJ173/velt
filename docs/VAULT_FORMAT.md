@@ -12,6 +12,7 @@ VELT-VAULT 2
 id 9f0c...32 lowercase hex...
 created_at 1790000000
 key_version 1
+key_mode team <team-id> <epoch>         # optional; omitted for local-key vaults
 binding <base64url ciphertext>          # optional, encrypted RemoteBinding
 ENTRY API_KEY 1790000100 - <base64url AES-SIV ciphertext>
 ENTRY DATABASE_URL 1790000100 1792592000 <base64url AES-SIV ciphertext>
@@ -22,6 +23,10 @@ ENTRY DATABASE_URL 1790000100 1792592000 <base64url AES-SIV ciphertext>
 - Key names, update times, and expiry are clear text but authenticated as AAD.
   Values are never stored in plaintext.
 - The team binding is encrypted independently.
+- `key_mode team <id> <epoch>` marks an exported file encrypted under the team
+  key. The header is public; the key is not in the file. Team id/epoch are bound
+  into every entry's AAD, so moving an entry between team files fails closed.
+- A local file has no `key_mode` line and uses the OS-keychain master key.
 - Unchanged entries produce byte-identical lines; independent additions merge
   with normal Git line merging. There is no global revision or checksum line.
 - Entry deletion is not detectable from the file alone; per-entry AEAD only

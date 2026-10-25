@@ -31,6 +31,7 @@ visible in the line-oriented vault file. See [docs/SECURITY.md](docs/SECURITY.md
 | --- | --- |
 | Encrypted local vault | Line-oriented AES-256-SIV per-entry AEAD; deterministic, AAD-bound entries; encrypted team binding; atomic 0600 writes; advisory locking; legacy v1 migration |
 | Git-friendly format | One entry per line, sorted keys, no global revision/checksum line; disjoint entries merge with ordinary Git; duplicate keys fail closed |
+| Shared team file | `velt export` writes a team-key-encrypted vault for Git; `velt team key-fetch` opens the sealed team key on a teammate's account |
 | OS keychain | macOS Keychain, Windows Credential Manager, Linux Secret Service via `keyring`; key material zeroized with `zeroize` |
 | Process injection | `velt run -- <cmd>`, inherited environment with vault overrides, signal forwarding, exact child exit codes |
 | Output redaction | Streaming stdout/stderr scrubbing of raw, percent-encoded, base64, JSON-escaped and hex forms; `--redact auto|always|never` |
@@ -119,6 +120,8 @@ velt edit
 velt recovery create [--threshold 2] [--shares 3] [--out-dir DIR]
 velt recovery restore SHARE_FILE...
 velt ci run --team UUID --env production -- COMMAND...
+velt export --out .velt.shared.vault [--force]
+velt team key-fetch --team UUID
 ```
 
 `--vault PATH` / `VELT_VAULT` override discovery. Without it, Velt walks upward from the current directory to find `.velt.vault`.
@@ -252,7 +255,7 @@ The dashboard can review teams, members, environment versions and audit events, 
 - The local vault is line-oriented, and every entry and team binding is independently authenticated with AES-256-SIV. A wrong key, modified ciphertext, modified entry metadata, or modified binding fails closed.
 - The format does not authenticate deletion of a whole entry, and deterministic encryption reveals equality and change patterns. Key names are intentionally visible for Git merges. It is not a whole-file tamper-evident log; use signed commits or relay audit history when completeness matters.
 - The master key is random, not derived from a password, and lives only in the OS credential store. Copying `.velt.vault` to another account does not grant access.
-- A committed `.velt.vault` is local to the account that owns its key. Team sharing is performed by the end-to-end-encrypted relay, not by committing the local file.
+- A local `.velt.vault` is encrypted under the local OS-keychain key. A teammate cannot decrypt it by cloning the repo. Use `velt export --out .velt.shared.vault` for a team-key-encrypted file that can be committed; see [docs/SHARED_VAULTS.md](docs/SHARED_VAULTS.md). The shared file does not contain the team key, so teammates must run `velt team key-fetch` first.
 - Velt zeroizes key material and plaintext payload buffers. It does not currently `mlock` memory; the OS may swap it.
 - Secrets are injected into the child environment. Other processes running as the same user may inspect `/proc/<pid>/environ` or process memory; Velt does not prevent that.
 - The relay sees team names, usernames, public keys, environment names, versions, sizes and access times. It does not see secrets or team keys.
@@ -296,6 +299,7 @@ flowchart LR
 - [docs/AGENT.md](docs/AGENT.md)
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - [docs/CI.md](docs/CI.md)
+- [docs/SHARED_VAULTS.md](docs/SHARED_VAULTS.md)
 
 ---
 
@@ -325,7 +329,7 @@ These are deliberate boundaries of the current implementation, not hidden stubs:
 - Redaction is best-effort and documented above.
 - No memory locking (`mlock`) or process sandboxing.
 - The line-oriented vault leaks key names, equality of unchanged entries, and the fact that an entry was removed. Commit signing or relay versions are required to detect deletion.
-- The local vault is not a shared team file: it is encrypted under the local OS-keychain key. Team members receive secrets through the relay's E2EE blobs.
+- The local vault remains local-key encrypted. A committed shared file uses the team key and is readable only after `velt team key-fetch`; it is not auto-rekeyed on rotation and has no embedded member envelopes.
 - Dashboard exports CSV, not PDF.
 - Custom rule packs can be signature-verified, but there is no hosted rule-update feed.
 - Linux keychain access requires an unlocked Secret Service session (GNOME Keyring/KWallet). Headless servers need a session keyring or a CI-specific design that is not included.

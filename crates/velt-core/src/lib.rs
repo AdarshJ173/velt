@@ -5,7 +5,8 @@
 //!
 //! - Secrets are decrypted only in memory and zeroized on drop.
 //! - Vault entries are independently authenticated with AES-256-SIV in a
-//!   line-oriented format; legacy whole-file ciphertext remains readable.
+//!   line-oriented format; local-key and team-key modes share the format, and
+//!   legacy whole-file ciphertext remains readable.
 //! - The sync server never receives a team key or plaintext.
 //! - All auditable operations return structured errors; library code contains
 //!   no `unwrap()`/`expect()` on fallible input.
@@ -25,5 +26,6 @@ pub mod vault;
 pub use error::{CoreError, Result};
 pub use secret::SecretValue;
 pub use vault::{
-    Entry, MasterKey, RemoteBinding, Vault, VaultHeader, VaultId, VaultLock, VaultPayload,
+    Entry, KeyMode, MasterKey, RemoteBinding, Vault, VaultHeader, VaultId, VaultLock,
+    VaultMetadata, VaultPayload,
 };

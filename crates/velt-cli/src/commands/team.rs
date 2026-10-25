@@ -25,6 +25,7 @@ pub fn execute(cli: &Cli, args: &TeamArgs) -> Result<i32> {
             team,
             yes,
         } => remove(cli, username, *team, *yes),
+        TeamCommand::FetchKey { team } => fetch_key(cli, *team),
         TeamCommand::RotateKey { team } => rotate(cli, *team),
         TeamCommand::Delete { team, yes } => delete(cli, *team, *yes),
         TeamCommand::Audit { team, limit } => audit(cli, *team, *limit),
@@ -290,6 +291,25 @@ fn remove(cli: &Cli, username: &str, team: Option<Uuid>, yes: bool) -> Result<i3
         output.text(&format!("Removed {} from the team.", target.username));
         output.text("IMPORTANT: rotate the team key now so the removed member cannot decrypt future updates:");
         output.text("  velt team rotate-key");
+    }
+    Ok(0)
+}
+
+fn fetch_key(cli: &Cli, team: Uuid) -> Result<i32> {
+    let output = Output::new(cli.json);
+    let session = remote::session()?;
+    let details = session.api.team(team)?;
+    let (_key, epoch) = remote::team_key(&session, team, details.key_epoch as u32)?;
+    if cli.json {
+        output.data(&json!({
+            "team_id": team,
+            "key_epoch": epoch,
+            "stored": true,
+        }))?;
+    } else {
+        output.text(&format!(
+            "Cached team key for {team} at epoch {epoch} in the OS keychain."
+        ));
     }
     Ok(0)
 }

@@ -124,6 +124,23 @@ impl VaultHeader {
     }
 }
 
+/// Which key protects the entries. Local vaults use the OS-keychain master
+/// key. Exported team vaults use the shared team key for the current epoch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyMode {
+    Local,
+    Team { team_id: String, epoch: u32 },
+}
+
+impl KeyMode {
+    fn suffix(&self) -> String {
+        match self {
+            Self::Local => String::new(),
+            Self::Team { team_id, epoch } => format!("|team|{team_id}|{epoch}"),
+        }
+    }
+}
+
 /// Optional binding between a local vault and a team environment on a sync
 /// server. The binding is encrypted with the vault master key.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -248,6 +265,7 @@ pub struct Vault {
     pub header: VaultHeader,
     pub payload: VaultPayload,
     format: u8,
+    key_mode: KeyMode,
 }
 
 impl Vault {
@@ -276,6 +294,7 @@ impl Vault {
             header,
             payload,
             format: TEXT_FORMAT_VERSION,
+            key_mode: KeyMode::Local,
         })
     }
 
@@ -315,17 +334,20 @@ impl Vault {
             header,
             payload,
             format: FORMAT_VERSION,
+            key_mode: KeyMode::Local,
         })
     }
 
     fn load_v2(path: PathBuf, bytes: &[u8], key: &MasterKey) -> Result<Self> {
         let header = parse_text_header(bytes)?;
-        let payload = decode_text_payload(bytes, header, key)?;
+        let key_mode = parse_text_key_mode(bytes)?;
+        let payload = decode_text_payload(bytes, header, &key_mode, key)?;
         Ok(Self {
             path,
             header,
             payload,
             format: TEXT_FORMAT_VERSION,
+            key_mode,
         })
     }
 
@@ -348,7 +370,7 @@ impl Vault {
             self.payload.revision = 1;
         }
 
-        let bytes = encode_text_vault(&self.payload, &self.header, key)?;
+        let bytes = encode_text_vault(&self.payload, &self.header, &self.key_mode, key)?;
         if bytes.len() as u64 > MAX_VAULT_BYTES {
             return Err(CoreError::InvalidVault(format!(
                 "encoded vault exceeds the {MAX_VAULT_BYTES} byte limit"
@@ -374,6 +396,37 @@ impl Vault {
     /// On-disk format version (1 legacy, 2 line-oriented).
     pub fn format_version(&self) -> u8 {
         self.format
+    }
+
+    pub fn key_mode(&self) -> &KeyMode {
+        &self.key_mode
+    }
+
+    pub fn set_key_mode(&mut self, key_mode: KeyMode) {
+        self.key_mode = key_mode;
+    }
+
+    /// Write an independently encrypted copy for a shared/committed file.
+    /// The in-memory vault and its original path are unchanged.
+    pub fn export_to(
+        &self,
+        path: impl AsRef<Path>,
+        key_mode: KeyMode,
+        key: &MasterKey,
+    ) -> Result<()> {
+        let mut payload = self.payload.clone();
+        payload.schema = TEXT_SCHEMA_VERSION;
+        payload.checksum.clear();
+        if let (KeyMode::Team { epoch, .. }, Some(binding)) = (&key_mode, &mut payload.binding) {
+            binding.epoch = *epoch;
+        }
+        let bytes = encode_text_vault(&payload, &self.header, &key_mode, key)?;
+        if bytes.len() as u64 > MAX_VAULT_BYTES {
+            return Err(CoreError::InvalidVault(format!(
+                "exported vault exceeds the {MAX_VAULT_BYTES} byte limit"
+            )));
+        }
+        write_atomic(path.as_ref(), &bytes)
     }
 
     pub fn binding(&self) -> Option<&RemoteBinding> {
@@ -536,7 +589,83 @@ fn parse_vault_id_hex(value: &str) -> Result<VaultId> {
     Ok(vault_id)
 }
 
-fn validate_text_payload(payload: &VaultPayload, header: &VaultHeader) -> Result<()> {
+/// Metadata visible without decrypting a vault.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VaultMetadata {
+    pub vault_id: VaultId,
+    pub key_mode: KeyMode,
+}
+
+fn parse_text_key_mode(bytes: &[u8]) -> Result<KeyMode> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| CoreError::InvalidVault("vault file is not valid UTF-8".to_owned()))?;
+    let mut mode: Option<KeyMode> = None;
+    for line in text.lines() {
+        let line = line.trim_end();
+        let Some(value) = line.strip_prefix("key_mode ") else {
+            continue;
+        };
+        if mode.is_some() {
+            return Err(CoreError::InvalidVault(
+                "duplicate key_mode line".to_owned(),
+            ));
+        }
+        let mut parts = value.split(' ');
+        match parts.next() {
+            Some("local") => {
+                if parts.next().is_some() {
+                    return Err(CoreError::InvalidVault(
+                        "key_mode local takes no arguments".to_owned(),
+                    ));
+                }
+                mode = Some(KeyMode::Local);
+            }
+            Some("team") => {
+                let team_id = parts.next().ok_or_else(|| {
+                    CoreError::InvalidVault("key_mode team is missing a team id".to_owned())
+                })?;
+                let team_id = uuid::Uuid::parse_str(team_id)
+                    .map_err(|_| {
+                        CoreError::InvalidVault("key_mode team id is not a UUID".to_owned())
+                    })?
+                    .to_string();
+                let epoch = parts
+                    .next()
+                    .ok_or_else(|| {
+                        CoreError::InvalidVault("key_mode team is missing an epoch".to_owned())
+                    })?
+                    .parse::<u32>()
+                    .map_err(|_| {
+                        CoreError::InvalidVault("key_mode team epoch is not an integer".to_owned())
+                    })?;
+                if epoch == 0 {
+                    return Err(CoreError::InvalidVault(
+                        "key_mode team epoch must be positive".to_owned(),
+                    ));
+                }
+                if parts.next().is_some() {
+                    return Err(CoreError::InvalidVault(
+                        "key_mode team has extra fields".to_owned(),
+                    ));
+                }
+                mode = Some(KeyMode::Team { team_id, epoch });
+            }
+            Some(other) => {
+                return Err(CoreError::InvalidVault(format!(
+                    "unknown key_mode {other:?}"
+                )));
+            }
+            None => return Err(CoreError::InvalidVault("empty key_mode line".to_owned())),
+        }
+    }
+    Ok(mode.unwrap_or(KeyMode::Local))
+}
+
+fn validate_text_payload(
+    payload: &VaultPayload,
+    header: &VaultHeader,
+    key_mode: &KeyMode,
+) -> Result<()> {
     if payload.schema != TEXT_SCHEMA_VERSION {
         return Err(CoreError::InvalidVault(format!(
             "cannot write payload schema {} as format 2",
@@ -577,6 +706,13 @@ fn validate_text_payload(payload: &VaultPayload, header: &VaultHeader) -> Result
                 "binding is missing a team id or environment".to_owned(),
             ));
         }
+        if let KeyMode::Team { team_id, .. } = key_mode {
+            if &binding.team_id != team_id {
+                return Err(CoreError::InvalidVault(
+                    "team vault key mode and binding name different teams".to_owned(),
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -587,24 +723,32 @@ fn entry_aad(
     name: &str,
     updated_at: i64,
     expires_at: Option<i64>,
+    key_mode: &KeyMode,
 ) -> String {
     let expires = match expires_at {
         Some(value) => value.to_string(),
         None => "-".to_owned(),
     };
-    format!("velt-vault-entry-v2|{vault_id}|{key_version}|{name}|{updated_at}|{expires}")
+    format!(
+        "velt-vault-entry-v2|{vault_id}|{key_version}|{name}|{updated_at}|{expires}{}",
+        key_mode.suffix()
+    )
 }
 
-fn binding_aad(vault_id: &str, key_version: u32) -> String {
-    format!("velt-vault-binding-v2|{vault_id}|{key_version}")
+fn binding_aad(vault_id: &str, key_version: u32, key_mode: &KeyMode) -> String {
+    format!(
+        "velt-vault-binding-v2|{vault_id}|{key_version}{}",
+        key_mode.suffix()
+    )
 }
 
 fn encode_text_vault(
     payload: &VaultPayload,
     header: &VaultHeader,
+    key_mode: &KeyMode,
     key: &MasterKey,
 ) -> Result<Vec<u8>> {
-    validate_text_payload(payload, header)?;
+    validate_text_payload(payload, header, key_mode)?;
     let siv_key = crypto::derive_siv_key(key.expose())?;
     let id_hex = header.vault_id_hex();
     let mut out = String::new();
@@ -619,11 +763,19 @@ fn encode_text_vault(
     out.push_str("key_version ");
     out.push_str(&payload.key_version.to_string());
     out.push('\n');
+    if let KeyMode::Team { team_id, epoch } = key_mode {
+        out.push_str("key_mode team ");
+        out.push_str(team_id);
+        out.push(' ');
+        out.push_str(&epoch.to_string());
+        out.push('\n');
+    }
 
     if let Some(binding) = &payload.binding {
         let json = Zeroizing::new(serde_json::to_vec(binding)?);
-        let nonce = crypto::binding_nonce(&header.vault_id);
-        let aad = binding_aad(&id_hex, payload.key_version);
+        let suffix = key_mode.suffix();
+        let nonce = crypto::binding_nonce(&header.vault_id, &suffix);
+        let aad = binding_aad(&id_hex, payload.key_version, key_mode);
         let ciphertext = crypto::siv_encrypt(&siv_key, &nonce, aad.as_bytes(), &json)?;
         out.push_str("binding ");
         out.push_str(&URL_SAFE_NO_PAD.encode(ciphertext));
@@ -633,13 +785,15 @@ fn encode_text_vault(
     for (name, entry) in &payload.entries {
         validate_name(name)?;
         validate_value(name, entry.value.expose())?;
-        let nonce = crypto::entry_nonce(&header.vault_id, name);
+        let suffix = key_mode.suffix();
+        let nonce = crypto::entry_nonce(&header.vault_id, name, &suffix);
         let aad = entry_aad(
             &id_hex,
             payload.key_version,
             name,
             entry.updated_at,
             entry.expires_at,
+            key_mode,
         );
         let ciphertext = crypto::siv_encrypt(
             &siv_key,
@@ -664,7 +818,12 @@ fn encode_text_vault(
     Ok(out.into_bytes())
 }
 
-fn decode_text_payload(bytes: &[u8], header: VaultHeader, key: &MasterKey) -> Result<VaultPayload> {
+fn decode_text_payload(
+    bytes: &[u8],
+    header: VaultHeader,
+    key_mode: &KeyMode,
+    key: &MasterKey,
+) -> Result<VaultPayload> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| CoreError::InvalidVault("vault file is not valid UTF-8".to_owned()))?;
     let id_hex = header.vault_id_hex();
@@ -676,6 +835,7 @@ fn decode_text_payload(bytes: &[u8], header: VaultHeader, key: &MasterKey) -> Re
     let mut raw_entries: Vec<(String, i64, Option<i64>, Vec<u8>)> = Vec::new();
     let mut seen_names = std::collections::BTreeSet::new();
     let mut seen_id = false;
+    let mut seen_key_mode = false;
 
     for (index, line) in text.lines().enumerate() {
         let line = line.trim_end();
@@ -733,6 +893,19 @@ fn decode_text_payload(bytes: &[u8], header: VaultHeader, key: &MasterKey) -> Re
                 });
             }
             key_version = Some(parsed);
+        } else if line.starts_with("key_mode ") {
+            if seen_key_mode {
+                return Err(CoreError::InvalidVault(
+                    "duplicate key_mode line".to_owned(),
+                ));
+            }
+            let parsed = parse_text_key_mode(line.as_bytes())?;
+            if &parsed != key_mode {
+                return Err(CoreError::InvalidVault(
+                    "key_mode line changed while parsing".to_owned(),
+                ));
+            }
+            seen_key_mode = true;
         } else if let Some(value) = line.strip_prefix("binding ") {
             if binding.is_some() {
                 return Err(CoreError::InvalidVault("duplicate binding line".to_owned()));
@@ -740,8 +913,9 @@ fn decode_text_payload(bytes: &[u8], header: VaultHeader, key: &MasterKey) -> Re
             let ciphertext = URL_SAFE_NO_PAD.decode(value).map_err(|_| {
                 CoreError::InvalidVault("binding ciphertext is not valid base64".to_owned())
             })?;
-            let nonce = crypto::binding_nonce(&header.vault_id);
-            let aad = binding_aad(&id_hex, MASTER_KEY_VERSION);
+            let suffix = key_mode.suffix();
+            let nonce = crypto::binding_nonce(&header.vault_id, &suffix);
+            let aad = binding_aad(&id_hex, MASTER_KEY_VERSION, key_mode);
             let plaintext = crypto::siv_decrypt(&siv_key, &nonce, aad.as_bytes(), &ciphertext)?;
             let parsed: RemoteBinding = serde_json::from_slice(plaintext.as_slice())?;
             if parsed.team_id.is_empty() || parsed.environment.is_empty() {
@@ -818,8 +992,10 @@ fn decode_text_payload(bytes: &[u8], header: VaultHeader, key: &MasterKey) -> Re
             &name,
             entry_updated_at,
             expires_at,
+            key_mode,
         );
-        let nonce = crypto::entry_nonce(&header.vault_id, &name);
+        let suffix = key_mode.suffix();
+        let nonce = crypto::entry_nonce(&header.vault_id, &name, &suffix);
         let plaintext = crypto::siv_decrypt(&siv_key, &nonce, aad.as_bytes(), &ciphertext)?;
         let value = std::str::from_utf8(plaintext.as_slice()).map_err(|_| {
             CoreError::InvalidVault("decrypted entry is not valid UTF-8".to_owned())
@@ -834,6 +1010,14 @@ fn decode_text_payload(bytes: &[u8], header: VaultHeader, key: &MasterKey) -> Re
                 expires_at,
             },
         );
+    }
+
+    if let (KeyMode::Team { team_id, .. }, Some(binding)) = (key_mode, &binding) {
+        if &binding.team_id != team_id {
+            return Err(CoreError::InvalidVault(
+                "team vault key mode and binding name different teams".to_owned(),
+            ));
+        }
     }
 
     Ok(VaultPayload {
@@ -879,7 +1063,7 @@ pub fn parse_header(bytes: &[u8]) -> Result<VaultHeader> {
 }
 
 /// Read the vault id without decrypting the payload.
-pub fn read_vault_id(path: &Path) -> Result<VaultId> {
+pub fn read_vault_metadata(path: &Path) -> Result<VaultMetadata> {
     let bytes = read_vault_file(path)?;
     if bytes.starts_with(MAGIC) {
         if bytes.len() < HEADER_LEN {
@@ -887,14 +1071,24 @@ pub fn read_vault_id(path: &Path) -> Result<VaultId> {
                 "legacy vault header is truncated".to_owned(),
             ));
         }
-        Ok(parse_header(&bytes[..HEADER_LEN])?.vault_id)
+        Ok(VaultMetadata {
+            vault_id: parse_header(&bytes[..HEADER_LEN])?.vault_id,
+            key_mode: KeyMode::Local,
+        })
     } else if bytes.starts_with(TEXT_MAGIC.as_bytes()) {
-        Ok(parse_text_header(&bytes)?.vault_id)
+        Ok(VaultMetadata {
+            vault_id: parse_text_header(&bytes)?.vault_id,
+            key_mode: parse_text_key_mode(&bytes)?,
+        })
     } else {
         Err(CoreError::InvalidVault(
             "file has neither a VELTVLT1 nor a VELT-VAULT 2 header".to_owned(),
         ))
     }
+}
+
+pub fn read_vault_id(path: &Path) -> Result<VaultId> {
+    Ok(read_vault_metadata(path)?.vault_id)
 }
 
 fn open_vault_file(path: &Path) -> Result<File> {
@@ -1235,6 +1429,75 @@ mod tests {
     }
 
     #[test]
+    fn team_mode_export_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let local_path = dir.path().join(".velt.vault");
+        let shared_path = dir.path().join(".velt.shared.vault");
+        let local_key = key();
+        let team_key = MasterKey::from_slice(&[0x77; 32]).unwrap();
+        let team_id = "00000000-0000-0000-0000-000000000001".to_owned();
+
+        let mut vault = Vault::new(&local_path, None).unwrap();
+        vault.set("API_KEY", "team-secret", None).unwrap();
+        vault.save(&local_key).unwrap();
+        assert_eq!(vault.key_mode(), &KeyMode::Local);
+
+        vault
+            .export_to(
+                &shared_path,
+                KeyMode::Team {
+                    team_id: team_id.clone(),
+                    epoch: 2,
+                },
+                &team_key,
+            )
+            .unwrap();
+        let text = fs::read_to_string(&shared_path).unwrap();
+        assert!(text.contains("key_mode team 00000000-0000-0000-0000-000000000001 2"));
+        assert!(!text.contains("team-secret"));
+
+        let metadata = read_vault_metadata(&shared_path).unwrap();
+        assert_eq!(metadata.vault_id, vault.header.vault_id);
+        assert_eq!(metadata.key_mode, KeyMode::Team { team_id, epoch: 2 });
+
+        let loaded = Vault::load(&shared_path, &team_key).unwrap();
+        assert_eq!(loaded.key_mode(), &metadata.key_mode);
+        assert_eq!(loaded.get("API_KEY").unwrap().value.expose(), "team-secret");
+        assert!(matches!(
+            Vault::load(&shared_path, &local_key),
+            Err(CoreError::AuthenticationFailed)
+        ));
+
+        // The source vault remains a local-key vault.
+        let source = Vault::load(&local_path, &local_key).unwrap();
+        assert_eq!(source.key_mode(), &KeyMode::Local);
+    }
+
+    #[test]
+    fn tampered_team_mode_fails_closed() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".velt.vault");
+        let team_key = MasterKey::from_slice(&[0x77; 32]).unwrap();
+        let mut vault = Vault::new(&path, None).unwrap();
+        vault.set("API_KEY", "team-secret", None).unwrap();
+        vault.set_key_mode(KeyMode::Team {
+            team_id: "00000000-0000-0000-0000-000000000001".to_owned(),
+            epoch: 2,
+        });
+        vault.save(&team_key).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let tampered = text.replace(
+            "key_mode team 00000000-0000-0000-0000-000000000001 2",
+            "key_mode team 00000000-0000-0000-0000-000000000002 2",
+        );
+        fs::write(&path, tampered).unwrap();
+        assert!(matches!(
+            Vault::load(&path, &team_key),
+            Err(CoreError::AuthenticationFailed)
+        ));
+    }
+
+    #[test]
     fn stale_v1_vault_is_migrated_on_save() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join(".velt.vault");
@@ -1364,7 +1627,9 @@ mod tests {
             binding: None,
             checksum: String::new(),
         };
-        let text = String::from_utf8(encode_text_vault(&payload, &header, &key).unwrap()).unwrap();
+        let text =
+            String::from_utf8(encode_text_vault(&payload, &header, &KeyMode::Local, &key).unwrap())
+                .unwrap();
         assert_eq!(
             text,
             "VELT-VAULT 2\n\

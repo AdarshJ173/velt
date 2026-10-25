@@ -21,6 +21,10 @@
   identity and SSH key. No local vault, no keychain writes, no persisted team
   key; bootstrap credentials are stripped from the child. GitHub Actions and
   Vercel usage documented in `docs/CI.md`.
+- `velt export` and `velt team key-fetch`: an optional team-key-encrypted
+  version 2 vault for Git. `key_mode team <id> <epoch>` is bound into the AAD;
+  entry ciphertexts are AES-256-SIV under the team key. The source local vault
+  is unchanged. See `docs/SHARED_VAULTS.md`.
 
 ## 0.1.0
 

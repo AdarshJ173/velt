@@ -94,6 +94,8 @@ pub enum Command {
     Share(ShareArgs),
     /// Mint a one-time browser link for the team dashboard.
     Dashboard,
+    /// Export a team-key-encrypted vault file for Git / shared checkouts.
+    Export(ExportArgs),
 }
 
 #[derive(Debug, Args)]
@@ -387,6 +389,12 @@ pub enum TeamCommand {
         #[arg(long)]
         yes: bool,
     },
+    /// Fetch and cache the current team key for this account.
+    #[command(name = "key-fetch")]
+    FetchKey {
+        #[arg(long)]
+        team: Uuid,
+    },
     /// Rotate the team key and re-encrypt every environment.
     #[command(name = "rotate-key")]
     RotateKey {
@@ -507,6 +515,17 @@ pub struct CiRunArgs {
     /// Command and arguments (use `--` before the command).
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<OsString>,
+}
+
+#[derive(Debug, Args)]
+pub struct ExportArgs {
+    /// Output path for the team-key-encrypted vault.
+    #[arg(long, default_value = ".velt.shared.vault", value_name = "PATH")]
+    pub out: PathBuf,
+
+    /// Overwrite an existing output file.
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Args)]

@@ -171,18 +171,28 @@ pub fn siv_decrypt(
 }
 
 /// Derive the public deterministic nonce for an entry.
-pub fn entry_nonce(vault_id: &[u8], name: &str) -> [u8; SIV_NONCE_LEN] {
-    let digest =
-        sha256(format!("velt-vault-entry-nonce-v2|{}|{name}", hex::encode(vault_id)).as_bytes());
+pub fn entry_nonce(vault_id: &[u8], name: &str, suffix: &str) -> [u8; SIV_NONCE_LEN] {
+    let digest = sha256(
+        format!(
+            "velt-vault-entry-nonce-v2|{}|{name}{suffix}",
+            hex::encode(vault_id)
+        )
+        .as_bytes(),
+    );
     let mut nonce = [0u8; SIV_NONCE_LEN];
     nonce.copy_from_slice(&digest[..SIV_NONCE_LEN]);
     nonce
 }
 
 /// Derive the public deterministic nonce for the binding record.
-pub fn binding_nonce(vault_id: &[u8]) -> [u8; SIV_NONCE_LEN] {
-    let digest =
-        sha256(format!("velt-vault-binding-nonce-v2|{}", hex::encode(vault_id)).as_bytes());
+pub fn binding_nonce(vault_id: &[u8], suffix: &str) -> [u8; SIV_NONCE_LEN] {
+    let digest = sha256(
+        format!(
+            "velt-vault-binding-nonce-v2|{}{suffix}",
+            hex::encode(vault_id)
+        )
+        .as_bytes(),
+    );
     let mut nonce = [0u8; SIV_NONCE_LEN];
     nonce.copy_from_slice(&digest[..SIV_NONCE_LEN]);
     nonce

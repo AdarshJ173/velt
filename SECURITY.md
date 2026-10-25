@@ -48,7 +48,8 @@ These are documented boundaries, not vulnerabilities:
 - deterministic AES-SIV equality leakage and clear-text key names, which are
   required for line-level Git merging;
 - a user who commits a local `.velt.vault` expecting teammates to decrypt it
-  without the relay or the owner's keychain;
+  without the relay or the owner's keychain; a shared file must be produced
+  with `velt export` and the teammate must fetch the team key;
 - a compromised CI runner, build log, or CI platform secret store reading the
   bootstrap identity/SSH key; use a dedicated runner identity;
 - denial of service against a self-hosted relay with no rate limiting/WAF;

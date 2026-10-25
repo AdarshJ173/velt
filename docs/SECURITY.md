@@ -22,7 +22,7 @@ Supported version: `0.1.x` (pre-1.0; security fixes land on `main`).
 - **No memory locking.** Velt does not call `mlock`; the OS may swap or hibernate process memory. Full-memory encryption or a locked-memory allocator is not implemented.
 - **No deletion or rollback detection.** A line-oriented vault authenticates each present entry, not the set of entries or the file's age. An attacker with write access can remove an entry or restore an older vault without a cryptographic error. Use signed commits, a trusted remote, filesystem permissions, and relay audit history.
 - **Deterministic ciphertext leaks equality.** AES-SIV with deterministic nonces means identical entries produce identical ciphertext and changes are visible. This is the tradeoff for line-level Git merges. Key names are clear text by design.
-- **A committed vault is not a shared team vault.** The local file is encrypted under the local OS-keychain master key. Team members cannot decrypt a copied `.velt.vault`; team sharing uses the relay's E2EE blobs and sealed team keys.
+- **Local and shared files use different keys.** A local `.velt.vault` is encrypted under the local OS-keychain master key; copying it does not grant access. `velt export` writes a separate `key_mode team` file encrypted under the team key. A teammate must fetch that key (`velt team key-fetch`) and the file does not embed member envelopes. A removed member who already has the file and key can decrypt it; rotate and re-export.
 - **CI bootstrap credentials are plaintext in the runner.** `velt ci run` reads `VELT_IDENTITY_KEY`, `VELT_SSH_KEY_CONTENT`/`VELT_SSH_KEY` and an SSH passphrase from the environment. They are removed from the child environment, but the CI platform, its logs and anyone who can read its secrets can read them. Use a dedicated runner identity and rotate it. The team key stays in memory and is not written to the keychain.
 - **No process sandbox.** Secrets are present in the child environment. Same-user processes can read `/proc/<pid>/environ` on Linux, inspect process memory, or attach debuggers. A child can write secrets to files or the network.
 - **Redaction is best-effort.** It catches the injected value and common encodings in captured stdout/stderr. It cannot catch arbitrary transforms (hashing, chunking, encryption), values shorter than 4 bytes, values longer than 64 KiB, or output that never goes through the pipe.
@@ -37,7 +37,8 @@ Supported version: `0.1.x` (pre-1.0; security fixes land on `main`).
 
 | Adversary | Capability | Mitigation |
 | --- | --- | --- |
-| Stolen vault file | Reads `.velt.vault` | AEAD without the key; key is in the OS keychain |
+| Stolen vault file | Reads `.velt.vault` | AEAD without the key; local key is in the OS keychain |
+| Stolen shared file | Reads `key_mode team` vault | AES-SIV under the team key; team id/epoch are AAD; key is in member keychains |
 | Malicious project file | Modifies entry ciphertext or metadata | Per-entry AES-SIV AAD fails closed |
 | Malicious project file | Deletes an entry line or rolls the file back | Not detected by the file; signed commits/trusted remote/relay history required |
 | Shoulder-surfing / logs | Reads terminal/history | Values masked in TUI, hidden prompts, `--stdin`, no values in list/audit/MCP schema |
@@ -50,7 +51,7 @@ Supported version: `0.1.x` (pre-1.0; security fixes land on `main`).
 
 ## Crypto choices
 
-- AES-256-SIV (RFC 5297) for line-oriented vault entries and the encrypted team binding, with a 64-byte HKDF-SHA256-derived key and deterministic per-entry nonces.
+- AES-256-SIV (RFC 5297) for line-oriented vault entries and the encrypted team binding, with a 64-byte HKDF-SHA256-derived key (master or team key) and deterministic per-entry nonces. Team id/epoch are bound into the nonce/AAD.
 - ChaCha20-Poly1305 (RFC 8439) for legacy format 1 vaults, team payload blobs, and key envelopes.
 - X25519 (Curve25519 DH) + HKDF-SHA256 for team-key wrapping; low-order public keys are rejected by contributory-behavior checks.
 - Ed25519 SSH signatures with namespace `velt-auth-v1` and SHA-512.

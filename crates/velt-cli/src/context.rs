@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use velt_core::crypto;
 use velt_core::keychain::{self, KeyStore, OsKeyStore};
-use velt_core::vault::{read_vault_id, MasterKey, Vault, VaultLock};
+use velt_core::vault::{read_vault_metadata, KeyMode, MasterKey, Vault, VaultLock};
 use zeroize::Zeroizing;
 
 use crate::error::{CliError, Result};
@@ -65,12 +65,37 @@ fn absolute(path: PathBuf) -> Result<PathBuf> {
     Ok(cwd.join(path))
 }
 
-/// Load a vault and its master key from the OS credential store.
+/// Load a vault and the key selected by its header.
+///
+/// Local vaults use the OS-keychain master key. Exported shared vaults use the
+/// team key for the epoch named in the header; that key must already be in the
+/// keychain (for example after `velt team key-fetch` or `velt sync pull`).
 pub fn open_vault(path: &Path) -> Result<(Vault, MasterKey)> {
-    let vault_id = read_vault_id(path)?;
-    let key = load_master_key(&vault_id)?;
+    let metadata = read_vault_metadata(path)?;
+    let key = match &metadata.key_mode {
+        KeyMode::Local => load_master_key(&metadata.vault_id)?,
+        KeyMode::Team { team_id, epoch } => load_team_key(team_id, *epoch)?,
+    };
     let vault = Vault::load(path, &key)?;
+    if vault.key_mode() != &metadata.key_mode {
+        return Err(CliError::msg(
+            "vault key mode changed while loading; the file may be corrupted",
+        ));
+    }
     Ok((vault, key))
+}
+
+fn load_team_key(team_id: &str, epoch: u32) -> Result<MasterKey> {
+    let account = keychain::team_key_account(team_id, epoch);
+    let stored = OsKeyStore.get(&account)?.ok_or_else(|| {
+        CliError::Config(format!(
+            "team key for {team_id} epoch {epoch} is not in this account's keychain; run `velt team key-fetch --team {team_id}` (or `velt sync pull`) first"
+        ))
+    })?;
+    if stored.len() != 32 {
+        return Err(CliError::msg("stored team key is malformed"));
+    }
+    MasterKey::from_slice(&stored).map_err(CliError::from)
 }
 
 /// Load a vault for a read-modify-write transaction, holding the advisory lock.

@@ -406,6 +406,47 @@ fn cli_sync_end_to_end() {
         "alice-secret-123456"
     );
 
+    // Export a team-key-encrypted file that can be committed. Bob fetches the
+    // team key explicitly and opens the file without a local vault.
+    let shared_path = alice_dir.join(".velt.shared.vault");
+    let mut alice = velt(&alice_config);
+    alice.current_dir(&alice_dir).args([
+        "--json",
+        "export",
+        "--out",
+        shared_path.to_str().unwrap(),
+        "--force",
+    ]);
+    let exported = run_json(&mut alice);
+    assert_eq!(exported["key_mode"], "team");
+    let shared_text = fs::read_to_string(&shared_path).unwrap();
+    assert!(shared_text.contains("key_mode team"));
+    assert!(!shared_text.contains("alice-secret-123456"));
+
+    let mut bob = velt(&bob_config);
+    bob.args(["--json", "team", "key-fetch", "--team", &team_id]);
+    let fetched = run_json(&mut bob);
+    assert_eq!(fetched["stored"], true);
+
+    let mut bob = velt(&bob_config);
+    bob.args([
+        "--vault",
+        shared_path.to_str().unwrap(),
+        "get",
+        "API_KEY",
+        "--no-newline",
+    ]);
+    let output = run(&mut bob);
+    assert!(
+        output.status.success(),
+        "shared vault open failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "alice-secret-123456"
+    );
+
     // Rotate the key after a member has enrolled; Bob must receive epoch 2.
     let mut alice = velt(&alice_config);
     alice
