@@ -28,7 +28,7 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::crypto;
 use crate::error::{CoreError, Result};
 use crate::secret::SecretValue;
-use crate::vault::{validate_name, validate_value, Entry, now_unix};
+use crate::vault::{now_unix, validate_name, validate_value, Entry};
 
 pub const TEAM_SCHEMA_VERSION: u32 = 1;
 
@@ -167,9 +167,7 @@ pub fn open_team_key(
     ephemeral.copy_from_slice(&ephemeral_bytes);
     let nonce_bytes = b64_decode(&sealed.nonce, "nonce")?;
     if nonce_bytes.len() != crypto::NONCE_LEN {
-        return Err(CoreError::InvalidCrypto(
-            "envelope nonce must be 12 bytes",
-        ));
+        return Err(CoreError::InvalidCrypto("envelope nonce must be 12 bytes"));
     }
     let mut nonce = [0u8; crypto::NONCE_LEN];
     nonce.copy_from_slice(&nonce_bytes);
@@ -272,10 +270,7 @@ impl TeamPayload {
 
     /// Encrypt the payload with the team key. The returned checksum is over the
     /// ciphertext and is safe to give the relay for integrity checks.
-    pub fn encrypt(
-        &mut self,
-        team_key: &[u8; crypto::KEY_LEN],
-    ) -> Result<EncryptedTeamPayload> {
+    pub fn encrypt(&mut self, team_key: &[u8; crypto::KEY_LEN]) -> Result<EncryptedTeamPayload> {
         self.checksum = self.compute_checksum()?;
         let body = Zeroizing::new(serde_json::to_vec(self)?);
         let aad = blob_aad(&self.team_id, &self.environment);
@@ -387,14 +382,7 @@ mod tests {
     #[test]
     fn envelope_roundtrip() {
         let identity = TeamIdentity::generate().unwrap();
-        let sealed = seal_team_key(
-            identity.public(),
-            "team-1",
-            3,
-            "alice",
-            &team_key(),
-        )
-        .unwrap();
+        let sealed = seal_team_key(identity.public(), "team-1", 3, "alice", &team_key()).unwrap();
         let opened = open_team_key(identity.secret(), "team-1", &sealed).unwrap();
         assert_eq!(&opened[..], &team_key());
     }
@@ -410,8 +398,7 @@ mod tests {
     #[test]
     fn envelope_is_bound_to_team_and_epoch() {
         let identity = TeamIdentity::generate().unwrap();
-        let sealed =
-            seal_team_key(identity.public(), "team-1", 1, "alice", &team_key()).unwrap();
+        let sealed = seal_team_key(identity.public(), "team-1", 1, "alice", &team_key()).unwrap();
         assert!(open_team_key(identity.secret(), "team-2", &sealed).is_err());
 
         let mut tampered = sealed;
@@ -439,10 +426,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(decrypted.entries.len(), 2);
-        assert_eq!(
-            decrypted.entries["API_KEY"].value.expose(),
-            "super-secret"
-        );
+        assert_eq!(decrypted.entries["API_KEY"].value.expose(), "super-secret");
         assert_eq!(decrypted.checksum, payload.checksum);
     }
 
@@ -483,15 +467,10 @@ mod tests {
         let body = Zeroizing::new(serde_json::to_vec(&payload).unwrap());
         let nonce = crypto::random_nonce().unwrap();
         let aad = blob_aad("team-1", "production");
-        let ciphertext =
-            crypto::encrypt(&team_key(), &nonce, aad.as_bytes(), &body).unwrap();
-        assert!(TeamPayload::decrypt(
-            &team_key(),
-            "team-1",
-            "production",
-            &nonce,
-            &ciphertext,
-        )
-        .is_err());
+        let ciphertext = crypto::encrypt(&team_key(), &nonce, aad.as_bytes(), &body).unwrap();
+        assert!(
+            TeamPayload::decrypt(&team_key(), "team-1", "production", &nonce, &ciphertext,)
+                .is_err()
+        );
     }
 }

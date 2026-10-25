@@ -152,9 +152,7 @@ pub fn verify_signature(
     verifying_key: &VerifyingKey,
 ) -> Result<()> {
     if signature.len() != 64 {
-        return Err(CoreError::InvalidCrypto(
-            "rule signature must be 64 bytes",
-        ));
+        return Err(CoreError::InvalidCrypto("rule signature must be 64 bytes"));
     }
     let signature = Signature::from_slice(signature)
         .map_err(|_| CoreError::InvalidCrypto("rule signature is malformed"))?;
@@ -168,9 +166,7 @@ pub fn parse_verifying_key(hex_key: &str) -> Result<VerifyingKey> {
     let bytes = hex::decode(hex_key.trim())
         .map_err(|_| CoreError::InvalidCrypto("rule public key is not valid hex"))?;
     if bytes.len() != 32 {
-        return Err(CoreError::InvalidCrypto(
-            "rule public key must be 32 bytes",
-        ));
+        return Err(CoreError::InvalidCrypto("rule public key must be 32 bytes"));
     }
     VerifyingKey::from_bytes(
         bytes
@@ -232,8 +228,7 @@ mod tests {
     fn invalid_rules_are_rejected() {
         let bad = br#"{"version":1,"rules":[{"id":"x","pattern":"(","severity":"error"}]}"#;
         assert!(RuleSet::parse(bad).is_err());
-        let bad_severity =
-            br#"{"version":1,"rules":[{"id":"x","pattern":"a","severity":"nuke"}]}"#;
+        let bad_severity = br#"{"version":1,"rules":[{"id":"x","pattern":"a","severity":"nuke"}]}"#;
         assert!(RuleSet::parse(bad_severity).is_err());
     }
 

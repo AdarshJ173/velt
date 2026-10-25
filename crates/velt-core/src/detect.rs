@@ -77,7 +77,9 @@ pub fn detect(directory: &Path) -> Vec<StackInfo> {
         || directory.join("compose.yaml").is_file()
     {
         let mut docker = StackInfo::new("Docker");
-        docker.evidence.push("Dockerfile or compose file".to_owned());
+        docker
+            .evidence
+            .push("Dockerfile or compose file".to_owned());
         docker.run_hint = Some("docker compose up".to_owned());
         stacks.push(docker);
     }
@@ -239,7 +241,9 @@ fn detect_python(directory: &Path) -> Option<StackInfo> {
     }
 
     let mut stack = StackInfo::new("Python");
-    stack.evidence.extend(present.iter().map(|name| (*name).to_owned()));
+    stack
+        .evidence
+        .extend(present.iter().map(|name| (*name).to_owned()));
     stack.package_manager = if exists(directory, "uv.lock") {
         Some("uv".to_owned())
     } else if exists(directory, "poetry.lock") {
@@ -364,7 +368,11 @@ mod tests {
     #[test]
     fn detects_rust_axum() {
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("Cargo.toml"), "[dependencies]\naxum = \"0.8\"\n").unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[dependencies]\naxum = \"0.8\"\n",
+        )
+        .unwrap();
         let stacks = detect(dir.path());
         assert_eq!(stacks[0].language, "Rust");
         assert_eq!(stacks[0].framework.as_deref(), Some("Axum"));

@@ -72,7 +72,9 @@ impl RecoveryShare {
             ));
         }
         if parts[1].len() != VAULT_ID_LEN * 2 {
-            return Err(CoreError::InvalidShare("invalid vault id length".to_owned()));
+            return Err(CoreError::InvalidShare(
+                "invalid vault id length".to_owned(),
+            ));
         }
         let vault_bytes = hex::decode(parts[1])
             .map_err(|_| CoreError::InvalidShare("vault id is not valid hex".to_owned()))?;
@@ -137,13 +139,7 @@ fn parse_u8(input: &str, field: &str) -> Result<u8> {
     })
 }
 
-fn share_checksum(
-    vault_id: &VaultId,
-    threshold: u8,
-    total: u8,
-    index: u8,
-    data: &[u8],
-) -> [u8; 8] {
+fn share_checksum(vault_id: &VaultId, threshold: u8, total: u8, index: u8, data: &[u8]) -> [u8; 8] {
     let mut hasher = Sha256::new();
     hasher.update(b"velt-recovery-v1");
     hasher.update(vault_id);
@@ -182,8 +178,7 @@ pub fn split(
     }
 
     // Polynomial coefficients: c0 is the secret, c1..c(k-1) are random.
-    let mut coefficients: Vec<Zeroizing<[u8; SECRET_LEN]>> =
-        Vec::with_capacity(threshold as usize);
+    let mut coefficients: Vec<Zeroizing<[u8; SECRET_LEN]>> = Vec::with_capacity(threshold as usize);
     let mut secret = Zeroizing::new([0u8; SECRET_LEN]);
     secret.copy_from_slice(key.expose());
     coefficients.push(secret);
@@ -225,7 +220,9 @@ fn evaluate(coefficients: &[Zeroizing<[u8; SECRET_LEN]>], x: u8, byte: usize) ->
 /// mismatched set is rejected rather than silently producing a wrong key.
 pub fn combine(shares: &[&str]) -> Result<(MasterKey, VaultId)> {
     if shares.is_empty() {
-        return Err(CoreError::InvalidShare("no recovery shares provided".to_owned()));
+        return Err(CoreError::InvalidShare(
+            "no recovery shares provided".to_owned(),
+        ));
     }
 
     let mut parsed = Vec::with_capacity(shares.len());
@@ -270,7 +267,11 @@ pub fn combine(shares: &[&str]) -> Result<(MasterKey, VaultId)> {
 
     // Cross-check any additional shares against the reconstructed polynomial.
     for extra in parsed.iter().skip(threshold as usize) {
-        let mut subset: Vec<&RecoveryShare> = selected.iter().take(threshold as usize - 1).copied().collect();
+        let mut subset: Vec<&RecoveryShare> = selected
+            .iter()
+            .take(threshold as usize - 1)
+            .copied()
+            .collect();
         subset.push(extra);
         let candidate = reconstruct(&subset)?;
         if !crypto::constant_time_eq(&candidate[..], &secret[..]) {
@@ -382,7 +383,10 @@ mod tests {
         let shares = split(&key(), vault_id(), 2, 3).unwrap();
         assert_eq!(shares.len(), 3);
         for combination in combos(&[0, 1, 2], 2) {
-            let refs: Vec<&str> = combination.iter().map(|index| shares[*index].as_str()).collect();
+            let refs: Vec<&str> = combination
+                .iter()
+                .map(|index| shares[*index].as_str())
+                .collect();
             let (recovered, id) = combine(&refs).unwrap();
             assert_eq!(recovered.expose(), key().expose());
             assert_eq!(id, vault_id());
@@ -393,7 +397,10 @@ mod tests {
     fn three_of_five_recovers() {
         let shares = split(&key(), vault_id(), 3, 5).unwrap();
         for combination in combos(&[0, 1, 2, 3, 4], 3) {
-            let refs: Vec<&str> = combination.iter().map(|index| shares[*index].as_str()).collect();
+            let refs: Vec<&str> = combination
+                .iter()
+                .map(|index| shares[*index].as_str())
+                .collect();
             let (recovered, _) = combine(&refs).unwrap();
             assert_eq!(recovered.expose(), key().expose());
         }

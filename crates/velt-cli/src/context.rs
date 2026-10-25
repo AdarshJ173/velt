@@ -95,15 +95,20 @@ impl WriteContext {
         self.vault.save(&self.key)?;
         Ok(())
     }
+
+    pub fn into_parts(self) -> (Vault, MasterKey, VaultLock) {
+        (self.vault, self.key, self._lock)
+    }
 }
 
 pub fn load_master_key(vault_id: &[u8; 16]) -> Result<MasterKey> {
     let account = keychain::vault_account(vault_id);
-    let stored = OsKeyStore
-        .get(&account)?
-        .ok_or_else(|| velt_core::CoreError::MasterKeyMissing {
-            vault_id: hex::encode(vault_id),
-        })?;
+    let stored =
+        OsKeyStore
+            .get(&account)?
+            .ok_or_else(|| velt_core::CoreError::MasterKeyMissing {
+                vault_id: hex::encode(vault_id),
+            })?;
     let key = MasterKey::from_slice(&stored)?;
     Ok(key)
 }

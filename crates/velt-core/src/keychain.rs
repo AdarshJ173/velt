@@ -40,7 +40,9 @@ impl KeyStore for OsKeyStore {
     fn set(&self, account: &str, secret: &[u8]) -> Result<()> {
         let entry = Entry::new(SERVICE, account)?;
         let mut encoded = Zeroizing::new(hex::encode(secret));
-        let result = entry.set_password(encoded.as_str()).map_err(CoreError::from);
+        let result = entry
+            .set_password(encoded.as_str())
+            .map_err(CoreError::from);
         encoded.zeroize();
         result
     }
@@ -50,7 +52,8 @@ impl KeyStore for OsKeyStore {
         match entry.get_password() {
             Ok(password) => {
                 let password = Zeroizing::new(password);
-                let decoded = hex::decode(password.as_bytes()).map_err(|_| CoreError::MalformedKey)?;
+                let decoded =
+                    hex::decode(password.as_bytes()).map_err(|_| CoreError::MalformedKey)?;
                 Ok(Some(Zeroizing::new(decoded)))
             }
             Err(keyring::Error::NoEntry) => Ok(None),
@@ -137,7 +140,10 @@ mod tests {
 
     #[test]
     fn account_names_are_namespaced() {
-        assert_eq!(vault_account(&[0xab; 16]), format!("vault:{}", "ab".repeat(16)));
+        assert_eq!(
+            vault_account(&[0xab; 16]),
+            format!("vault:{}", "ab".repeat(16))
+        );
         assert_eq!(team_key_account("team", 3), "team-key:team:3");
         assert!(identity_account("https://a", "alice").starts_with("identity:"));
         assert!(session_account("https://a", "alice").starts_with("session:"));

@@ -19,9 +19,7 @@ pub const TAG_LEN: usize = 16;
 
 /// Fill `out` with bytes from the operating system CSPRNG.
 pub fn fill_random(out: &mut [u8]) -> Result<()> {
-    OsRng
-        .try_fill_bytes(out)
-        .map_err(|_| CoreError::Rng)
+    OsRng.try_fill_bytes(out).map_err(|_| CoreError::Rng)
 }
 
 /// Generate a fresh random nonce.
@@ -72,7 +70,7 @@ pub fn encrypt(
     let cipher = ChaCha20Poly1305::new(key.into());
     cipher
         .encrypt(
-            Nonce::from_slice(nonce),
+            &Nonce::from(*nonce),
             Payload {
                 msg: plaintext,
                 aad,
@@ -94,7 +92,7 @@ pub fn decrypt(
     let cipher = ChaCha20Poly1305::new(key.into());
     let plaintext = cipher
         .decrypt(
-            Nonce::from_slice(nonce),
+            &Nonce::from(*nonce),
             Payload {
                 msg: ciphertext,
                 aad,

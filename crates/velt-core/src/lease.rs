@@ -311,7 +311,11 @@ mod tests {
         let token = lease.token();
         let payload_start = token.find('.').unwrap() + 1;
         let mut chars: Vec<char> = token.chars().collect();
-        chars[payload_start] = if chars[payload_start] == 'A' { 'B' } else { 'A' };
+        chars[payload_start] = if chars[payload_start] == 'A' {
+            'B'
+        } else {
+            'A'
+        };
         let tampered: String = chars.into_iter().collect();
         assert!(verify(&secret(), &tampered, &vault_id(), now_unix()).is_err());
     }

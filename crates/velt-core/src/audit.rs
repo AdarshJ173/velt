@@ -71,6 +71,53 @@ impl Finding {
     }
 }
 
+/// Compact status used by machine-readable inspection commands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretStatus {
+    Valid,
+    Empty,
+    Placeholder,
+    Expired,
+    Expiring,
+}
+
+/// Classify a secret without revealing it.
+pub fn classify(value: &str, expires_at: Option<i64>, now: i64) -> SecretStatus {
+    let trimmed = value.trim();
+    if expires_at.is_some_and(|expiry| expiry <= now) {
+        return SecretStatus::Expired;
+    }
+    if jwt_expiry(trimmed).is_some_and(|expiry| expiry <= now) {
+        return SecretStatus::Expired;
+    }
+    if value.is_empty() {
+        return SecretStatus::Empty;
+    }
+    if is_placeholder(trimmed) {
+        return SecretStatus::Placeholder;
+    }
+    let soon = now + Duration::days(14).whole_seconds();
+    if expires_at.is_some_and(|expiry| expiry <= soon)
+        || jwt_expiry(trimmed).is_some_and(|expiry| expiry <= soon)
+    {
+        return SecretStatus::Expiring;
+    }
+    SecretStatus::Valid
+}
+
+impl std::fmt::Display for SecretStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Valid => "valid",
+            Self::Empty => "empty",
+            Self::Placeholder => "placeholder",
+            Self::Expired => "expired",
+            Self::Expiring => "expiring",
+        })
+    }
+}
+
 /// Audit a set of vault entries.
 pub fn audit_entries(entries: &BTreeMap<String, Entry>, now: i64) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -355,8 +402,14 @@ pub fn credential_format(value: &str) -> Option<&'static str> {
             (r"^sk_live_[0-9A-Za-z]{16,}$", "Stripe live secret key"),
             (r"^rk_live_[0-9A-Za-z]{16,}$", "Stripe restricted live key"),
             (r"^gh[pousr]_[A-Za-z0-9]{30,}$", "GitHub token"),
-            (r"^github_pat_[A-Za-z0-9_]{50,}$", "GitHub fine-grained token"),
-            (r"^glpat-[A-Za-z0-9_\-]{20,}$", "GitLab personal access token"),
+            (
+                r"^github_pat_[A-Za-z0-9_]{50,}$",
+                "GitHub fine-grained token",
+            ),
+            (
+                r"^glpat-[A-Za-z0-9_\-]{20,}$",
+                "GitLab personal access token",
+            ),
             (r"^xox[abposr]-[A-Za-z0-9\-]{10,}$", "Slack token"),
             (r"^AIza[0-9A-Za-z\-_]{35}$", "Google API key"),
             (
@@ -376,7 +429,9 @@ pub fn credential_format(value: &str) -> Option<&'static str> {
         patterns
             .iter()
             .filter_map(|(pattern, name)| {
-                Regex::new(pattern).ok().map(|regex| Matcher { regex, name })
+                Regex::new(pattern)
+                    .ok()
+                    .map(|regex| Matcher { regex, name })
             })
             .collect()
     });
@@ -633,7 +688,8 @@ mod tests {
         let findings = audit(&[("STRIPE_KEY", "replace_me")]);
         assert!(findings
             .iter()
-            .any(|finding| finding.code == "placeholder_value" && finding.severity == Severity::Error));
+            .any(|finding| finding.code == "placeholder_value"
+                && finding.severity == Severity::Error));
     }
 
     #[test]
@@ -645,7 +701,27 @@ mod tests {
     #[test]
     fn short_sensitive_values_warn() {
         let findings = audit(&[("API_TOKEN", "abc")]);
-        assert!(findings.iter().any(|finding| finding.code == "short_secret"));
+        assert!(findings
+            .iter()
+            .any(|finding| finding.code == "short_secret"));
+    }
+
+    #[test]
+    fn classification_covers_expiry_and_placeholders() {
+        let now = now_unix();
+        assert_eq!(classify("real-value", None, now), SecretStatus::Valid);
+        assert_eq!(classify("", None, now), SecretStatus::Empty);
+        assert_eq!(classify("replace_me", None, now), SecretStatus::Placeholder);
+        assert_eq!(
+            classify("real-value", Some(now - 1), now),
+            SecretStatus::Expired
+        );
+        assert_eq!(
+            classify("real-value", Some(now + 3600), now),
+            SecretStatus::Expiring
+        );
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3MDAwMDAwMDB9.signature";
+        assert_eq!(classify(jwt, None, now), SecretStatus::Expired);
     }
 
     #[test]
@@ -662,14 +738,20 @@ mod tests {
         assert!(findings
             .iter()
             .any(|finding| finding.code == "recognized_credential"));
-        assert_eq!(credential_format("ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), Some("GitHub token"));
+        assert_eq!(
+            credential_format("ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            Some("GitHub token")
+        );
     }
 
     #[test]
     fn expired_metadata_is_an_error() {
         let now = now_unix();
         let mut entries = BTreeMap::new();
-        entries.insert("OLD".to_owned(), entry("a-real-looking-secret", Some(now - 3600)));
+        entries.insert(
+            "OLD".to_owned(),
+            entry("a-real-looking-secret", Some(now - 3600)),
+        );
         let findings = audit_entries(&entries, now);
         assert!(findings.iter().any(|finding| finding.code == "expired"));
     }
@@ -712,9 +794,15 @@ mod tests {
         drop(file);
 
         let findings = audit_directory(dir.path(), now_unix());
-        assert!(findings.iter().any(|finding| finding.code == "plaintext_credential"));
-        assert!(findings.iter().any(|finding| finding.code == "plaintext_placeholder"));
-        assert!(findings.iter().any(|finding| finding.code == "env_file_not_ignored"));
+        assert!(findings
+            .iter()
+            .any(|finding| finding.code == "plaintext_credential"));
+        assert!(findings
+            .iter()
+            .any(|finding| finding.code == "plaintext_placeholder"));
+        assert!(findings
+            .iter()
+            .any(|finding| finding.code == "env_file_not_ignored"));
     }
 
     #[test]
@@ -723,7 +811,9 @@ mod tests {
         fs::write(dir.path().join(".gitignore"), ".env\n").unwrap();
         fs::write(dir.path().join(".env"), "A=1\n").unwrap();
         let findings = audit_directory(dir.path(), now_unix());
-        assert!(!findings.iter().any(|finding| finding.code == "env_file_not_ignored"));
+        assert!(!findings
+            .iter()
+            .any(|finding| finding.code == "env_file_not_ignored"));
     }
 
     #[test]

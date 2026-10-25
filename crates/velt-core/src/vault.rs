@@ -190,12 +190,10 @@ impl VaultPayload {
             return Err(CoreError::InvalidVault("missing payload checksum".into()));
         }
         let expected = self.compute_checksum()?;
-        let expected_bytes = hex::decode(expected).map_err(|_| {
-            CoreError::InvalidVault("payload checksum is not valid hex".to_owned())
-        })?;
-        let actual_bytes = hex::decode(&self.checksum).map_err(|_| {
-            CoreError::InvalidVault("payload checksum is not valid hex".to_owned())
-        })?;
+        let expected_bytes = hex::decode(expected)
+            .map_err(|_| CoreError::InvalidVault("payload checksum is not valid hex".to_owned()))?;
+        let actual_bytes = hex::decode(&self.checksum)
+            .map_err(|_| CoreError::InvalidVault("payload checksum is not valid hex".to_owned()))?;
         if !crypto::constant_time_eq(&expected_bytes, &actual_bytes) {
             return Err(CoreError::InvalidVault(
                 "payload checksum mismatch; the vault is corrupted".to_owned(),
@@ -217,7 +215,9 @@ impl VaultPayload {
             ));
         }
         if self.key_version == 0 {
-            return Err(CoreError::InvalidVault("key version must be positive".into()));
+            return Err(CoreError::InvalidVault(
+                "key version must be positive".into(),
+            ));
         }
         if self.revision == 0 {
             return Err(CoreError::InvalidVault("revision must be positive".into()));
@@ -245,10 +245,7 @@ impl Vault {
     ///
     /// The caller is responsible for storing the master key under
     /// [`crate::keychain::vault_account`] before or after saving.
-    pub fn new(
-        path: impl Into<PathBuf>,
-        binding: Option<RemoteBinding>,
-    ) -> Result<Self> {
+    pub fn new(path: impl Into<PathBuf>, binding: Option<RemoteBinding>) -> Result<Self> {
         let mut vault_id = [0u8; VAULT_ID_LEN];
         crypto::fill_random(&mut vault_id)?;
         let timestamp = now_unix();
@@ -444,7 +441,9 @@ pub fn validate_value(name: &str, value: &str) -> Result<()> {
 /// Parse and validate a header.
 pub fn parse_header(bytes: &[u8]) -> Result<VaultHeader> {
     if bytes.len() < HEADER_LEN {
-        return Err(CoreError::InvalidVault("file is shorter than the header".into()));
+        return Err(CoreError::InvalidVault(
+            "file is shorter than the header".into(),
+        ));
     }
     if &bytes[..8] != MAGIC {
         return Err(CoreError::InvalidVault(
@@ -595,10 +594,8 @@ impl VaultLock {
     pub fn acquire(vault_path: &Path) -> Result<Self> {
         let canonical = canonical_lock_target(vault_path);
         let digest = crypto::sha256(format!("{}", canonical.display()).as_bytes());
-        let lock_path = std::env::temp_dir().join(format!(
-            "velt-{}.lock",
-            hex::encode(&digest[..16])
-        ));
+        let lock_path =
+            std::env::temp_dir().join(format!("velt-{}.lock", hex::encode(&digest[..16])));
         let mut options = OpenOptions::new();
         options.create(true).read(true).write(true).truncate(false);
         #[cfg(unix)]
@@ -640,7 +637,9 @@ mod tests {
     fn new_vault(dir: &TempDir) -> (Vault, PathBuf) {
         let path = dir.path().join(".velt.vault");
         let mut vault = Vault::new(&path, None).unwrap();
-        vault.set("DATABASE_URL", "postgres://localhost/app", None).unwrap();
+        vault
+            .set("DATABASE_URL", "postgres://localhost/app", None)
+            .unwrap();
         vault.set("API_TOKEN", "token-value", None).unwrap();
         vault.save(&key()).unwrap();
         (vault, path)
