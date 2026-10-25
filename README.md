@@ -45,7 +45,7 @@ visible in the line-oriented vault file. See [docs/SECURITY.md](docs/SECURITY.md
 | Dashboard | Server-rendered team/member/environment/audit views, one-time CLI login, CSRF protection, audit CSV, revocation |
 | Deployment | Docker image, compose stack, migrations embedded in the binary, health/readiness endpoints |
 
-There is no billing, hosted service, OIDC/SAML SSO, or CI-provider integration in this repository. See [Limitations](#limitations).
+There is no billing, hosted service, or OIDC/SAML SSO in this repository. CI builds use `velt ci run`; there is no provider API that copies secrets into a hosting provider's environment store. See [Limitations](#limitations) and [docs/CI.md](docs/CI.md).
 
 ---
 
