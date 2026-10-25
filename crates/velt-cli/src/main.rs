@@ -1,6 +1,7 @@
 //! `velt` entry point.
 
 mod agent;
+mod api;
 mod cli;
 mod commands;
 mod config;
@@ -8,6 +9,7 @@ mod context;
 mod envfile;
 mod error;
 mod redact;
+mod remote;
 mod util;
 
 use clap::Parser;

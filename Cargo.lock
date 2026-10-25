@@ -5051,6 +5051,7 @@ dependencies = [
  "rustls-pki-types",
  "sha1 0.11.0",
  "thiserror 2.0.21",
+ "url",
  "webpki-roots 0.26.11",
 ]
 
@@ -5208,6 +5209,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "assert_cmd",
+ "axum",
  "base64 0.22.1",
  "clap",
  "crossterm",
@@ -5217,6 +5219,7 @@ dependencies = [
  "hmac 0.12.1",
  "libc",
  "percent-encoding",
+ "postgresql_embedded",
  "predicates",
  "rand 0.8.8",
  "ratatui",
@@ -5230,10 +5233,12 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "time",
+ "tokio",
  "toml",
  "tungstenite 0.30.0",
  "uuid",
  "velt-core",
+ "velt-server",
  "x25519-dalek",
  "zeroize",
 ]

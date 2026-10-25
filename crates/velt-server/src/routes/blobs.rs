@@ -111,7 +111,7 @@ pub async fn push_blob(
     Ok(Json(json!({
         "environment": environment,
         "version": new_version,
-        "updated_at": updated_at,
+        "updated_at": util::rfc3339(updated_at),
     })))
 }
 
@@ -168,7 +168,7 @@ pub async fn pull_blob(
         "ciphertext": validate::encode_b64(&row.ciphertext),
         "checksum": validate::encode_b64(&row.checksum),
         "updated_by": row.updated_by_username,
-        "updated_at": row.updated_at,
+        "updated_at": util::rfc3339(row.updated_at),
         "not_modified": false,
     })))
 }
@@ -195,7 +195,7 @@ pub async fn list_environments(
             json!({
                 "environment": row.environment,
                 "version": row.version,
-                "updated_at": row.updated_at,
+                "updated_at": util::rfc3339(row.updated_at),
             })
         })
         .collect();

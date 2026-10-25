@@ -38,7 +38,7 @@ pub async fn list_teams(
                 "name": team.name,
                 "owner_id": team.owner_id,
                 "key_epoch": team.key_epoch,
-                "created_at": team.created_at,
+                "created_at": util::rfc3339(team.created_at),
                 "role": team.role,
                 "env_grants": team.env_grants,
             })
@@ -126,7 +126,7 @@ pub async fn create_team(
             "role": "owner",
             "env_grants": [],
             "key_epoch": 1,
-            "created_at": created_at,
+            "created_at": util::rfc3339(created_at),
         })),
     ))
 }
@@ -164,7 +164,7 @@ pub async fn get_team(
             json!({
                 "environment": blob.environment,
                 "version": blob.version,
-                "updated_at": blob.updated_at,
+                "updated_at": util::rfc3339(blob.updated_at),
             })
         })
         .collect();
@@ -177,7 +177,7 @@ pub async fn get_team(
                 "role": member.role,
                 "env_grants": member.env_grants,
                 "encryption_public_key": member.encryption_public_key,
-                "created_at": member.created_at,
+                "created_at": util::rfc3339(member.created_at),
             })
         })
         .collect();
@@ -186,7 +186,7 @@ pub async fn get_team(
         "name": team.name,
         "owner_id": team.owner_id,
         "key_epoch": team.key_epoch,
-        "created_at": team.created_at,
+        "created_at": util::rfc3339(team.created_at),
         "role": member.role,
         "env_grants": member.env_grants,
         "can_manage": can_manage,
@@ -638,7 +638,7 @@ pub async fn audit_log(
             "action": event.action,
             "subject": event.subject,
             "metadata": event.metadata,
-            "created_at": event.created_at,
+            "created_at": util::rfc3339(event.created_at),
         })).collect::<Vec<_>>()
     })))
 }

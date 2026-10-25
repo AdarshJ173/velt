@@ -3,6 +3,8 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use uuid::Uuid;
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -80,6 +82,14 @@ pub enum Command {
     Request(RequestArgs),
     /// Run the Model Context Protocol server over stdio.
     Mcp(McpArgs),
+    /// Authenticate against a Velt sync server using an SSH key.
+    Auth(AuthArgs),
+    /// Create and manage E2EE teams.
+    Team(TeamArgs),
+    /// Bind, push, pull and watch team environments.
+    Sync(SyncArgs),
+    /// Invite a teammate to the team bound to this vault.
+    Share(ShareArgs),
 }
 
 #[derive(Debug, Args)]
@@ -307,4 +317,158 @@ pub struct McpArgs {
     /// Expose read-only tools (inspect/audit/request status) but not execution.
     #[arg(long)]
     pub read_only: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct AuthArgs {
+    #[command(subcommand)]
+    pub command: AuthCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuthCommand {
+    /// Register a username and SSH public key with a relay.
+    Register(AuthRegisterArgs),
+    /// Sign a challenge with the configured SSH key and store a session.
+    Login {
+        /// Override the configured username.
+        #[arg(long)]
+        username: Option<String>,
+    },
+    /// Show the configured server, username and session status.
+    Status,
+    /// Revoke the current session locally and on the server.
+    Logout,
+}
+
+#[derive(Debug, Args)]
+pub struct AuthRegisterArgs {
+    /// Relay base URL, e.g. https://sync.example.com.
+    #[arg(long)]
+    pub server: String,
+
+    /// Username to register.
+    #[arg(long)]
+    pub username: String,
+
+    /// SSH private key path (defaults to ~/.ssh/id_ed25519).
+    #[arg(long, value_name = "PATH")]
+    pub ssh_key: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct TeamArgs {
+    #[command(subcommand)]
+    pub command: TeamCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TeamCommand {
+    /// Create a team and generate its E2EE team key.
+    Create { name: String },
+    /// List teams you belong to.
+    List,
+    /// Show members and environments.
+    Members {
+        #[arg(long)]
+        team: Option<Uuid>,
+    },
+    /// Invite a registered teammate and seal the team key to them.
+    Invite(InviteArgs),
+    /// Remove a teammate (run rotate-key afterwards).
+    Remove {
+        username: String,
+        #[arg(long)]
+        team: Option<Uuid>,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Rotate the team key and re-encrypt every environment.
+    #[command(name = "rotate-key")]
+    RotateKey {
+        #[arg(long)]
+        team: Option<Uuid>,
+    },
+    /// Delete a team you own.
+    Delete {
+        #[arg(long)]
+        team: Uuid,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Show the audit trail for a team you administer.
+    Audit {
+        #[arg(long)]
+        team: Option<Uuid>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct InviteArgs {
+    pub username: String,
+
+    #[arg(long, default_value = "developer")]
+    pub role: String,
+
+    /// Environment grants (repeat or comma-separate). Defaults to the vault binding.
+    #[arg(long, value_name = "ENV", value_delimiter = ',')]
+    pub env: Vec<String>,
+
+    /// Team id (defaults to the vault binding).
+    #[arg(long)]
+    pub team: Option<Uuid>,
+}
+
+#[derive(Debug, Args)]
+pub struct SyncArgs {
+    #[command(subcommand)]
+    pub command: SyncCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SyncCommand {
+    /// Bind this vault to a team environment and fetch the team key.
+    Init {
+        #[arg(long)]
+        team: Uuid,
+        #[arg(long, alias = "env", value_name = "ENV")]
+        environment: String,
+        /// Replace an existing binding.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Encrypt the vault and push it to the bound team environment.
+    Push {
+        #[arg(long)]
+        force: bool,
+    },
+    /// Pull the bound environment, decrypt it, and update the local vault.
+    Pull {
+        #[arg(long)]
+        force: bool,
+        /// Keep local-only keys and let remote values win on conflicts.
+        #[arg(long)]
+        merge: bool,
+    },
+    /// Show local binding and remote environment metadata.
+    Status,
+    /// Stream team change events over WebSocket.
+    Watch,
+}
+
+#[derive(Debug, Args)]
+pub struct ShareArgs {
+    pub username: String,
+
+    #[arg(long, default_value = "developer")]
+    pub role: String,
+
+    /// Environment grants. Defaults to the bound environment.
+    #[arg(long, value_name = "ENV", value_delimiter = ',')]
+    pub env: Vec<String>,
+
+    #[arg(long)]
+    pub team: Option<Uuid>,
 }

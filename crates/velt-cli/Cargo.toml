@@ -29,7 +29,7 @@ uuid.workspace = true
 x25519-dalek.workspace = true
 toml = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
-tungstenite = { version = "0.30", default-features = false, features = ["rustls-tls-webpki-roots", "handshake"] }
+tungstenite = { version = "0.30", default-features = false, features = ["rustls-tls-webpki-roots", "handshake", "url"] }
 ratatui = "0.30"
 crossterm = "0.29"
 rpassword = "7.4"
@@ -47,3 +47,7 @@ libc = "0.2"
 tempfile = "3.14"
 assert_cmd = "2.0"
 predicates = "3.1"
+velt-server = { path = "../velt-server" }
+postgresql_embedded = { version = "0.22", default-features = false, features = ["blocking", "theseus", "tls-rustls-ring"] }
+tokio = { version = "1.48", features = ["full"] }
+axum = "0.8"

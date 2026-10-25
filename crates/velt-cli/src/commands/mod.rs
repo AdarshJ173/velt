@@ -1,6 +1,7 @@
 //! Command dispatch.
 
 pub mod audit;
+pub mod auth;
 pub mod edit;
 pub mod init;
 pub mod inspect;
@@ -10,6 +11,9 @@ pub mod mcp;
 pub mod recovery;
 pub mod request;
 pub mod run;
+pub mod share;
+pub mod sync;
+pub mod team;
 
 use crate::cli::{Cli, Command};
 use crate::error::{CliError, Result};
@@ -32,5 +36,9 @@ pub fn dispatch(cli: &Cli) -> Result<i32> {
         Command::Lease(args) => lease::execute(cli, args),
         Command::Request(args) => request::execute(cli, args),
         Command::Mcp(args) => mcp::execute(cli, args),
+        Command::Auth(args) => auth::execute(cli, args),
+        Command::Team(args) => team::execute(cli, args),
+        Command::Sync(args) => sync::execute(cli, args),
+        Command::Share(args) => share::execute(cli, args),
     }
 }

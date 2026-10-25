@@ -38,9 +38,6 @@ pub enum CliError {
     #[error("server returned {status}: {message}")]
     Server { status: u16, message: String },
 
-    #[error("request failed: {0}")]
-    Request(String),
-
     #[error("terminal error: {0}")]
     Terminal(String),
 }
@@ -66,7 +63,6 @@ impl CliError {
             Self::Json(_) | Self::TomlDe(_) | Self::TomlSer(_) => "serialization",
             Self::Network(_) => "network",
             Self::Server { .. } => "server",
-            Self::Request(_) => "request",
             Self::Terminal(_) => "terminal",
         }
     }

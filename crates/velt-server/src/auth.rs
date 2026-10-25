@@ -105,7 +105,7 @@ pub async fn register(
                 "id": id,
                 "username": username,
                 "encryption_public_key": encryption_public_key,
-                "created_at": created_at,
+                "created_at": util::rfc3339(created_at),
             })),
         )),
         Err(sqlx::Error::Database(error)) if error.is_unique_violation() => Err(
@@ -155,7 +155,7 @@ pub async fn challenge(
     Ok(Json(json!({
         "challenge_id": id,
         "challenge": validate::encode_b64(&challenge),
-        "expires_at": expires_at,
+        "expires_at": util::rfc3339(expires_at),
         "namespace": AUTH_NAMESPACE,
     })))
 }
@@ -224,7 +224,7 @@ pub async fn verify(
 
     Ok(Json(json!({
         "token": token_encoded,
-        "expires_at": expires_at,
+        "expires_at": util::rfc3339(expires_at),
         "user": {"id": user_id, "username": username},
     })))
 }

@@ -146,3 +146,10 @@ pub async fn insert_envelope(
 pub fn timestamp(timestamp: i64) -> OffsetDateTime {
     OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or_else(|_| now())
 }
+
+/// RFC 3339 representation used by every API response.
+pub fn rfc3339(value: OffsetDateTime) -> String {
+    value
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| value.unix_timestamp().to_string())
+}
