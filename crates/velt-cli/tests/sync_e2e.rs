@@ -84,6 +84,7 @@ fn start_relay(database_url: String) -> String {
                 session_ttl_seconds: 3600,
                 challenge_ttl_seconds: 300,
                 max_blob_bytes: 4 * 1024 * 1024,
+                max_body_bytes: 64 * 1024 * 1024,
                 max_envelopes: 64,
                 public_url: None,
             };

@@ -57,7 +57,7 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateE
 
 pub fn build_app(state: AppState) -> Router {
     let request_id = HeaderName::from_static("x-request-id");
-    let body_limit = state.config.max_blob_bytes.saturating_add(64 * 1024);
+    let body_limit = state.config.max_body_bytes;
     Router::new()
         .route("/healthz", get(health))
         .route("/readyz", get(ready))

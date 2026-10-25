@@ -3,7 +3,7 @@
 //! Secrets are never stored here. The sync session token and the X25519
 //! identity private key live in the OS credential store.
 
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -96,35 +96,22 @@ pub fn save(config: &Config) -> Result<()> {
 pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     let directory = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(directory).map_err(|err| CliError::io(directory, err))?;
-    let mut suffix = [0u8; 6];
-    velt_core::crypto::fill_random(&mut suffix)?;
-    let temp = directory.join(format!(
-        ".{}.tmp-{}",
-        path.file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "velt".to_owned()),
-        hex::encode(suffix)
-    ));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
+    let mut temp = tempfile::Builder::new()
+        .prefix(".velt-tmp-")
+        .tempfile_in(directory)
+        .map_err(|err| CliError::io(directory, err))?;
+    temp.as_file_mut()
+        .write_all(bytes)
+        .map_err(|err| CliError::io(temp.path(), err))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|err| CliError::io(temp.path(), err))?;
+    temp.persist(path)
+        .map_err(|error| CliError::io(path, error.error))?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
     }
-    let result = (|| -> Result<()> {
-        let mut file = options
-            .open(&temp)
-            .map_err(|err| CliError::io(&temp, err))?;
-        file.write_all(bytes)
-            .map_err(|err| CliError::io(&temp, err))?;
-        file.sync_all().map_err(|err| CliError::io(&temp, err))?;
-        drop(file);
-        fs::rename(&temp, path).map_err(|err| CliError::io(path, err))?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
+    Ok(())
 }

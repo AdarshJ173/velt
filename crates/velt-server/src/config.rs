@@ -11,6 +11,7 @@ pub struct Config {
     pub session_ttl_seconds: i64,
     pub challenge_ttl_seconds: i64,
     pub max_blob_bytes: usize,
+    pub max_body_bytes: usize,
     pub max_envelopes: usize,
     pub public_url: Option<String>,
 }
@@ -35,6 +36,8 @@ impl Config {
         let challenge_ttl_seconds = env_i64("VELT_CHALLENGE_TTL_SECONDS", 300).clamp(30, 900);
         let max_blob_bytes =
             env_i64("VELT_MAX_BLOB_BYTES", 4 * 1024 * 1024).clamp(1024, 16 * 1024 * 1024) as usize;
+        let max_body_bytes = env_i64("VELT_MAX_BODY_BYTES", 64 * 1024 * 1024)
+            .clamp(1024 * 1024, 256 * 1024 * 1024) as usize;
         let max_envelopes = env_i64("VELT_MAX_ENVELOPES", 512).clamp(1, 4096) as usize;
         let public_url = std::env::var("VELT_PUBLIC_URL")
             .ok()
@@ -47,6 +50,7 @@ impl Config {
             session_ttl_seconds: session_ttl_hours * 3600,
             challenge_ttl_seconds,
             max_blob_bytes,
+            max_body_bytes,
             max_envelopes,
             public_url,
         })

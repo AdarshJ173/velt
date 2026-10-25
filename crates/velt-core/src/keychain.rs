@@ -85,18 +85,27 @@ impl MemoryKeyStore {
 
 impl KeyStore for MemoryKeyStore {
     fn set(&self, account: &str, secret: &[u8]) -> Result<()> {
-        let mut guard = self.entries.lock().expect("memory key store poisoned");
+        let mut guard = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.insert(account.to_owned(), secret.to_vec());
         Ok(())
     }
 
     fn get(&self, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
-        let guard = self.entries.lock().expect("memory key store poisoned");
+        let guard = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         Ok(guard.get(account).cloned().map(Zeroizing::new))
     }
 
     fn delete(&self, account: &str) -> Result<()> {
-        let mut guard = self.entries.lock().expect("memory key store poisoned");
+        let mut guard = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.remove(account);
         Ok(())
     }

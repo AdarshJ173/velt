@@ -23,7 +23,8 @@ velt auth register --server http://127.0.0.1:8080 --username alice
 | `VELT_BIND` | `127.0.0.1:8080` | API listen address |
 | `VELT_SESSION_TTL_HOURS` | `24` | clamp 1..720 |
 | `VELT_CHALLENGE_TTL_SECONDS` | `300` | clamp 30..900 |
-| `VELT_MAX_BLOB_BYTES` | `4194304` | clamp 1 KiB..16 MiB |
+| `VELT_MAX_BLOB_BYTES` | `4194304` | decoded ciphertext per blob; clamp 1 KiB..16 MiB |
+| `VELT_MAX_BODY_BYTES` | `67108864` | total JSON request body, accounting for base64 and rotation batches; clamp 1 MiB..256 MiB |
 | `VELT_MAX_ENVELOPES` | `512` | rotation batch limit |
 | `VELT_PUBLIC_URL` | unset | HTTPS origin used for dashboard links and `Secure` cookies |
 | `RUST_LOG` | `info,sqlx=warn,tower_http=info` | tracing filter |
@@ -106,6 +107,6 @@ Removal is immediate at the relay. Rotation is client-driven because the relay h
 
 ## CI
 
-The included workflow runs formatting, clippy with `-D warnings`, the core/CLI/server tests, and the full CLI↔relay end-to-end test under a virtual D-Bus Secret Service on Linux. The embedded PostgreSQL test binary is downloaded on first run and cached by the Rust cache.
+The included workflow runs formatting, clippy with `-D warnings`, the core/CLI/server tests, and the full CLI↔relay end-to-end test under a virtual D-Bus Secret Service on Linux. The embedded PostgreSQL test binary is downloaded on first run.
 
 Cross-platform release builds are produced by `.github/workflows/release.yml` for Linux, macOS and Windows. Linux builds need `libdbus-1-dev` for `keyring`; release artifacts are unsigned. For production distribution, add code signing, notarization, reproducible-build verification and checksums.

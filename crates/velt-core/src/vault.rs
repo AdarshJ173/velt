@@ -533,52 +533,29 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| CoreError::InvalidVault("vault path has no file name".to_owned()))?;
-
-    let mut suffix = [0u8; 8];
-    crypto::fill_random(&mut suffix)?;
-    let temp_path = directory.join(format!(
-        ".{}.tmp-{}",
-        file_name.to_string_lossy(),
-        hex::encode(suffix)
-    ));
-
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
+    let mut temp = tempfile::Builder::new()
+        .prefix(".velt-vault-")
+        .tempfile_in(directory)
+        .map_err(|err| CoreError::io(directory, err))?;
+    temp.as_file_mut()
+        .write_all(bytes)
+        .map_err(|err| CoreError::io(temp.path(), err))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|err| CoreError::io(temp.path(), err))?;
+    temp.persist(path)
+        .map_err(|error| CoreError::io(path, error.error))?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        use std::os::unix::fs::PermissionsExt;
+        // The temporary file was created 0600; this is a belt-and-braces
+        // adjustment and must not fail a save that already landed.
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
     }
-
-    let write_result = (|| -> Result<()> {
-        let mut file = options
-            .open(&temp_path)
-            .map_err(|err| CoreError::io(&temp_path, err))?;
-        file.write_all(bytes)
-            .map_err(|err| CoreError::io(&temp_path, err))?;
-        file.sync_all()
-            .map_err(|err| CoreError::io(&temp_path, err))?;
-        drop(file);
-        fs::rename(&temp_path, path).map_err(|err| CoreError::io(path, err))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-                .map_err(|err| CoreError::io(path, err))?;
-        }
-        if let Ok(directory_file) = File::open(directory) {
-            let _ = directory_file.sync_all();
-        }
-        Ok(())
-    })();
-
-    if write_result.is_err() {
-        let _ = fs::remove_file(&temp_path);
+    if let Ok(directory_file) = File::open(directory) {
+        let _ = directory_file.sync_all();
     }
-    write_result
+    Ok(())
 }
 
 /// Advisory exclusive lock held while a vault is read-modified-written.

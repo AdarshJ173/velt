@@ -123,7 +123,12 @@ fn install_mcp_config(root: &Path) -> Result<PathBuf> {
     let path = root.join(".mcp.json");
     let mut document = if path.exists() {
         let contents = fs::read_to_string(&path).map_err(|err| CliError::io(&path, err))?;
-        serde_json::from_str::<JsonValue>(&contents).unwrap_or_else(|_| json!({}))
+        serde_json::from_str::<JsonValue>(&contents).map_err(|_| {
+            CliError::msg(format!(
+                "{} is not valid JSON; refusing to overwrite it",
+                path.display()
+            ))
+        })?
     } else {
         json!({})
     };
@@ -202,6 +207,19 @@ mod tests {
         let contents = fs::read_to_string(dir.path().join("CLAUDE.md")).unwrap();
         assert!(contents.starts_with("# Project"));
         assert!(contents.contains(BLOCK_START));
+    }
+
+    #[test]
+    fn invalid_mcp_config_is_preserved() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".mcp.json"), "{ not valid").unwrap();
+        let install = install_guardrails(dir.path());
+        let contents = fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
+        assert_eq!(contents, "{ not valid");
+        assert!(install
+            .warnings
+            .iter()
+            .any(|warning| warning.contains(".mcp.json")));
     }
 
     #[test]
