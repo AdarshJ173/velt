@@ -2,6 +2,7 @@
 
 pub mod audit;
 pub mod auth;
+pub mod dashboard;
 pub mod edit;
 pub mod init;
 pub mod inspect;
@@ -40,5 +41,6 @@ pub fn dispatch(cli: &Cli) -> Result<i32> {
         Command::Team(args) => team::execute(cli, args),
         Command::Sync(args) => sync::execute(cli, args),
         Command::Share(args) => share::execute(cli, args),
+        Command::Dashboard => dashboard::execute(cli),
     }
 }

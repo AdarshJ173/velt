@@ -90,6 +90,8 @@ pub enum Command {
     Sync(SyncArgs),
     /// Invite a teammate to the team bound to this vault.
     Share(ShareArgs),
+    /// Mint a one-time browser link for the team dashboard.
+    Dashboard,
 }
 
 #[derive(Debug, Args)]

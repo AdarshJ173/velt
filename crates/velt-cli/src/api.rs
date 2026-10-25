@@ -203,6 +203,13 @@ pub struct AuditEvent {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct DashboardLink {
+    pub path: String,
+    #[serde(default)]
+    pub expires_at: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct AuditResponse {
     events: Vec<AuditEvent>,
@@ -458,6 +465,11 @@ impl ApiClient {
     pub fn delete_team(&self, team_id: Uuid) -> Result<()> {
         self.send(Method::DELETE, &format!("/v1/teams/{team_id}"), None)?;
         Ok(())
+    }
+
+    pub fn dashboard_session(&self) -> Result<DashboardLink> {
+        let value = self.send(Method::POST, "/v1/dashboard/session", None)?;
+        Ok(serde_json::from_value(value)?)
     }
 
     pub fn websocket_url(&self, team_id: Uuid, token: &str) -> String {

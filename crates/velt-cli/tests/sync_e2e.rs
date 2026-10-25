@@ -288,6 +288,16 @@ fn cli_sync_end_to_end() {
         String::from_utf8_lossy(&output.stdout)
     );
 
+    // Mint a dashboard login link (the browser flow itself is covered by the
+    // server integration test).
+    let mut alice = velt(&alice_config);
+    alice.args(["--json", "dashboard"]);
+    let dashboard = run_json(&mut alice);
+    assert!(dashboard["url"]
+        .as_str()
+        .unwrap()
+        .contains("/dashboard/login?token="));
+
     // The owner can read the audit trail.
     let mut alice = velt(&alice_config);
     alice.args(["--json", "team", "audit", "--team", &team_id]);

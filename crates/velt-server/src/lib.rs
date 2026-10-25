@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod dashboard;
 pub mod error;
 pub mod events;
 pub mod models;
@@ -62,7 +63,8 @@ pub fn build_app(state: AppState) -> Router {
         .route("/readyz", get(ready))
         .nest("/v1/auth", auth::public_router())
         .route("/v1/me", get(auth::me))
-        .nest("/v1", routes::router())
+        .nest("/v1", routes::router().merge(dashboard::api_router()))
+        .merge(dashboard::router())
         .layer(DefaultBodyLimit::max(body_limit))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,

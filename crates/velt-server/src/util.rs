@@ -34,6 +34,17 @@ pub fn hash_token(token: &str) -> Vec<u8> {
     sha256(token.as_bytes()).to_vec()
 }
 
+pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (a, b) in left.iter().zip(right) {
+        difference |= a ^ b;
+    }
+    difference == 0
+}
+
 pub async fn membership(
     pool: &PgPool,
     team_id: Uuid,

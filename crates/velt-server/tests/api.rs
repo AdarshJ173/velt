@@ -595,6 +595,85 @@ fn relay_end_to_end() {
             "postgres://localhost/app"
         );
 
+        // Dashboard: one-time login link, cookie session, rendered team and CSV.
+        let (status, link) = call(
+            &client,
+            Method::POST,
+            format!("{base}/v1/dashboard/session"),
+            Some(&alice_token),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "dashboard link failed: {link}");
+        let login_path = link["path"].as_str().unwrap();
+        let no_redirect = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap();
+        let login = no_redirect
+            .get(format!("{base}{login_path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(login.status(), StatusCode::SEE_OTHER);
+        let cookie = login
+            .headers()
+            .get(reqwest::header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned();
+        assert!(cookie.starts_with("velt_dashboard="));
+
+        // A one-time link cannot be replayed.
+        let replay = no_redirect
+            .get(format!("{base}{login_path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+
+        let dashboard = no_redirect
+            .get(format!("{base}/dashboard"))
+            .header(reqwest::header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(dashboard.status(), StatusCode::OK);
+        let html = dashboard.text().await.unwrap();
+        assert!(html.contains("acme"), "dashboard did not render team");
+        assert!(html.contains("Zero-knowledge"));
+
+        let team_page = no_redirect
+            .get(format!("{base}/dashboard/teams/{team_id}"))
+            .header(reqwest::header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(team_page.status(), StatusCode::OK);
+        let html = team_page.text().await.unwrap();
+        assert!(html.contains("Members"));
+        assert!(html.contains("Audit trail"));
+        assert!(html.contains("Revocation requires key rotation"));
+
+        let csv = no_redirect
+            .get(format!("{base}/dashboard/teams/{team_id}/audit.csv"))
+            .header(reqwest::header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(csv.status(), StatusCode::OK);
+        assert!(csv.headers()[reqwest::header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/csv"));
+        let csv_body = csv.text().await.unwrap();
+        assert!(csv_body.contains("key_rotated"));
+
         // The owner can read the audit trail and delete the team.
         let (status, audit) = call(
             &client,
