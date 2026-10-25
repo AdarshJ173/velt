@@ -437,12 +437,15 @@ mod tests {
     #[test]
     fn corrupted_share_is_rejected() {
         let shares = split(&key(), vault_id(), 2, 3).unwrap();
-        let mut corrupted = shares[0].as_str().to_owned();
-        // Flip one base32 character in the data field.
-        let replaced = corrupted.replacen('A', "B", 1);
-        corrupted = replaced;
+        let mut parts: Vec<String> = shares[0].split('.').map(str::to_owned).collect();
+        // The data field is between the index and checksum. Flip its first
+        // base32 character deterministically; the per-share checksum must catch it.
+        let data = parts.get_mut(5).expect("share data field");
+        let replacement = if data.starts_with('A') { "B" } else { "A" };
+        data.replace_range(..1, replacement);
+        let corrupted = parts.join(".");
         let refs = [corrupted.as_str(), shares[1].as_str()];
-        assert!(combine(&refs).is_err());
+        assert!(matches!(combine(&refs), Err(CoreError::InvalidShare(_))));
     }
 
     #[test]

@@ -4,7 +4,8 @@
 //! Design invariants:
 //!
 //! - Secrets are decrypted only in memory and zeroized on drop.
-//! - Vault files are authenticated ciphertext; every write uses a fresh nonce.
+//! - Vault entries are independently authenticated with AES-256-SIV in a
+//!   line-oriented format; legacy whole-file ciphertext remains readable.
 //! - The sync server never receives a team key or plaintext.
 //! - All auditable operations return structured errors; library code contains
 //!   no `unwrap()`/`expect()` on fallible input.

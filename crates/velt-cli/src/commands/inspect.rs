@@ -105,6 +105,7 @@ pub fn execute(cli: &Cli, args: &InspectArgs) -> Result<i32> {
             "vault": path,
             "vault_id": vault.vault_id_hex(),
             "revision": vault.revision(),
+            "format": vault.format_version(),
             "binding": vault.binding(),
             "keys": keys,
             "required": args.require,

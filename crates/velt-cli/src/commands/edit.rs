@@ -358,6 +358,7 @@ fn draw(frame: &mut Frame, app: &mut App, path: &Path) {
         .binding()
         .map(|binding| format!("  team {} / {}", binding.team_id, binding.environment))
         .unwrap_or_default();
+    let key_count = app.names().len();
     let title = Line::from(vec![
         Span::styled(
             " VELT ",
@@ -370,8 +371,10 @@ fn draw(frame: &mut Frame, app: &mut App, path: &Path) {
         Span::styled(path.display().to_string(), Style::default().fg(Color::Gray)),
         Span::styled(
             format!(
-                "  rev {}{}{}",
-                app.vault.revision(),
+                "  format {} · {} key{}{}{}",
+                app.vault.format_version(),
+                key_count,
+                if key_count == 1 { "" } else { "s" },
                 binding,
                 if app.dirty { "  [unsaved]" } else { "" }
             ),

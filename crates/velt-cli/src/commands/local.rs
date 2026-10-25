@@ -96,6 +96,7 @@ pub fn list(cli: &Cli) -> Result<i32> {
             "vault": path,
             "vault_id": vault.vault_id_hex(),
             "revision": vault.revision(),
+            "format": vault.format_version(),
             "binding": vault.binding(),
             "keys": keys,
         }))?;

@@ -161,7 +161,8 @@ The relay can see usernames, public keys, team names, memberships, roles, enviro
 
 | Purpose | Primitive |
 | --- | --- |
-| Vault / team payload / envelope encryption | ChaCha20-Poly1305 (256-bit key, 96-bit random nonce) |
+| Local vault entries | AES-256-SIV (512-bit key derived with HKDF, deterministic 128-bit nonces) |
+| Team payload / envelope encryption | ChaCha20-Poly1305 (256-bit key, 96-bit random nonce) |
 | Team key wrapping | X25519 + HKDF-SHA256 |
 | Auth signatures | Ed25519 SSH signatures (`sshsig`), SHA-512 |
 | Integrity metadata | SHA-256 |

@@ -315,8 +315,11 @@ impl SignalForwarder {
             .name("velt-signals".to_owned())
             .spawn(move || {
                 for signal in signals.forever() {
-                    // Forward the same signal to the child. If the child already
-                    // exited, kill() returns ESRCH and is intentionally ignored.
+                    // SAFETY: this is a direct `kill(2)` system call. `pid` is
+                    // the positive PID returned by `Command::spawn`; `signal`
+                    // comes from signal-hook's fixed constant set. The call has
+                    // no Rust memory-safety preconditions, and ESRCH after child
+                    // exit is intentionally ignored.
                     unsafe {
                         libc::kill(pid as i32, signal);
                     }

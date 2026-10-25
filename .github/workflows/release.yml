@@ -6,6 +6,8 @@ on:
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -29,13 +31,19 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+      - name: Set reproducible timestamp
+        shell: bash
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} -p velt -p velt-server
+        env:
+          CARGO_INCREMENTAL: "0"
+          RUSTFLAGS: "--remap-path-prefix=${{ github.workspace }}=/build"
+        run: cargo build --release --locked --target ${{ matrix.target }} -p velt -p velt-server
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
@@ -51,10 +59,29 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/velt.exe" "dist/${{ matrix.archive }}/"
           Copy-Item "target/${{ matrix.target }}/release/velt-server.exe" "dist/${{ matrix.archive }}/"
           Compress-Archive -Path "dist/${{ matrix.archive }}" -DestinationPath "dist/${{ matrix.archive }}.zip"
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign archive (keyless OIDC)
+        shell: bash
+        run: |
+          for file in dist/*.tar.gz dist/*.zip; do
+            [ -e "$file" ] || continue
+            cosign sign-blob --yes --bundle "$file.sigstore.json" "$file"
+          done
+      - name: Attest build provenance (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/${{ matrix.archive }}.tar.gz
+      - name: Attest build provenance (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/${{ matrix.archive }}.zip
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.archive }}
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.sigstore.json
           if-no-files-found: ignore

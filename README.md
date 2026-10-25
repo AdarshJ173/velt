@@ -10,13 +10,27 @@ velt run -- npm run dev
 
 Velt is local-first: no account is required for local secrets, auditing, leases, the TUI, or the MCP server. Team sync is opt-in.
 
+## Threat model in brief
+
+Velt is designed to protect against accidental plaintext commits, offline theft
+of the vault file, a compromised sync relay, and casual leakage through logs or
+agent output. It is not a sandbox.
+
+It does **not** protect against a compromised OS session, rootkit, debugger, or
+same-user process reading `/proc/<pid>/environ`; a malicious application that
+exfiltrates secrets it was given; values transformed beyond the redactor's
+encodings; or deletion of an entire vault entry (per-entry AEAD authenticates
+present entries but cannot prove absence). Key names and change patterns are
+visible in the line-oriented vault file. See [docs/SECURITY.md](docs/SECURITY.md).
+
 ---
 
 ## What is implemented
 
 | Area | Capabilities |
 | --- | --- |
-| Encrypted local vault | ChaCha20-Poly1305, random per-write nonces, AAD-bound header, SHA-256 payload checksum, atomic 0600 writes, advisory locking |
+| Encrypted local vault | Line-oriented AES-256-SIV per-entry AEAD; deterministic, AAD-bound entries; encrypted team binding; atomic 0600 writes; advisory locking; legacy v1 migration |
+| Git-friendly format | One entry per line, sorted keys, no global revision/checksum line; disjoint entries merge with ordinary Git; duplicate keys fail closed |
 | OS keychain | macOS Keychain, Windows Credential Manager, Linux Secret Service via `keyring`; key material zeroized with `zeroize` |
 | Process injection | `velt run -- <cmd>`, inherited environment with vault overrides, signal forwarding, exact child exit codes |
 | Output redaction | Streaming stdout/stderr scrubbing of raw, percent-encoded, base64, JSON-escaped and hex forms; `--redact auto|always|never` |
@@ -56,6 +70,10 @@ Build the relay:
 ```bash
 cargo build --release -p velt-server
 ```
+
+On Linux, `./scripts/check-reproducible.sh` builds the release CLI twice and
+compares the binaries. The release workflow requests Sigstore signatures and
+GitHub build provenance; verify the bundle before distributing an artifact.
 
 ---
 
@@ -229,8 +247,10 @@ The dashboard can review teams, members, environment versions and audit events, 
 
 ## Security model
 
-- The local vault is authenticated ciphertext. A wrong key, tampered byte, truncated file or mismatched header fails closed.
+- The local vault is line-oriented, and every entry and team binding is independently authenticated with AES-256-SIV. A wrong key, modified ciphertext, modified entry metadata, or modified binding fails closed.
+- The format does not authenticate deletion of a whole entry, and deterministic encryption reveals equality and change patterns. Key names are intentionally visible for Git merges. It is not a whole-file tamper-evident log; use signed commits or relay audit history when completeness matters.
 - The master key is random, not derived from a password, and lives only in the OS credential store. Copying `.velt.vault` to another account does not grant access.
+- A committed `.velt.vault` is local to the account that owns its key. Team sharing is performed by the end-to-end-encrypted relay, not by committing the local file.
 - Velt zeroizes key material and plaintext payload buffers. It does not currently `mlock` memory; the OS may swap it.
 - Secrets are injected into the child environment. Other processes running as the same user may inspect `/proc/<pid>/environ` or process memory; Velt does not prevent that.
 - The relay sees team names, usernames, public keys, environment names, versions, sizes and access times. It does not see secrets or team keys.
@@ -248,7 +268,7 @@ Full threat model and non-goals: [docs/SECURITY.md](docs/SECURITY.md).
 flowchart LR
   subgraph Dev["Developer machine"]
     CLI["velt CLI / TUI / MCP"]
-    Vault[(".velt.vault<br/>AEAD ciphertext")]
+    Vault[(".velt.vault<br/>line-oriented AES-SIV")]
     KC["OS keychain<br/>master key + identities"]
     Child["Child process<br/>env injected + output scrubbed"]
     CLI -->|decrypt in memory| Vault
@@ -264,6 +284,10 @@ flowchart LR
   API -->|"LISTEN/NOTIFY -> WebSocket"| CLI
 ```
 
+- [SPEC.md](SPEC.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [GOVERNANCE.md](GOVERNANCE.md)
+- [SECURITY.md](SECURITY.md)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/VAULT_FORMAT.md](docs/VAULT_FORMAT.md)
 - [docs/SYNC_PROTOCOL.md](docs/SYNC_PROTOCOL.md)
@@ -275,6 +299,10 @@ flowchart LR
 ## Repository layout
 
 ```text
+SPEC.md              normative line-oriented vault format
+CONTRIBUTING.md      two-ring contribution policy
+GOVERNANCE.md        maintainer and decision model
+SECURITY.md          disclosure policy and scope
 crates/velt-core     vault format, AEAD, keychain, audit, recovery, leases, E2EE primitives
 crates/velt-cli      CLI, TUI, redaction, MCP, requests, sync client, dashboard link
 crates/velt-server   Axum relay, PostgreSQL schema, auth, RBAC, events, dashboard
@@ -293,6 +321,8 @@ These are deliberate boundaries of the current implementation, not hidden stubs:
 - The relay uses PostgreSQL `LISTEN/NOTIFY` for fan-out instead of Redis Pub/Sub. This keeps the stateless-server design without another datastore.
 - Redaction is best-effort and documented above.
 - No memory locking (`mlock`) or process sandboxing.
+- The line-oriented vault leaks key names, equality of unchanged entries, and the fact that an entry was removed. Commit signing or relay versions are required to detect deletion.
+- The local vault is not a shared team file: it is encrypted under the local OS-keychain key. Team members receive secrets through the relay's E2EE blobs.
 - Dashboard exports CSV, not PDF.
 - Custom rule packs can be signature-verified, but there is no hosted rule-update feed.
 - Linux keychain access requires an unlocked Secret Service session (GNOME Keyring/KWallet). Headless servers need a session keyring or a CI-specific design that is not included.
@@ -302,6 +332,18 @@ These are deliberate boundaries of the current implementation, not hidden stubs:
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+- `velt-core`, `velt`, and the specification: MIT OR Apache-2.0. See
+  [LICENSE](LICENSE) and [LICENSE-APACHE](LICENSE-APACHE).
+- `velt-server` (the relay): Functional Source License 1.1 with an
+  Apache-2.0 future grant (`FSL-1.1-ALv2`). It permits internal use,
+  self-hosting, modification, and redistribution, but not a competing
+  commercial product or service; it converts to Apache-2.0 two years after each
+  release. See [LICENSE-FSL](LICENSE-FSL). Earlier server snapshots that were
+  published under MIT remain MIT; the split applies to this and future
+  snapshots.
+- `SPEC.md`: CC0-1.0.
+
+This is a source-available split, not legal advice. Get counsel before a
+commercial launch or a license change.
 
 Security reports: see [docs/SECURITY.md](docs/SECURITY.md).

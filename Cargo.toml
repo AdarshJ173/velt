@@ -6,7 +6,7 @@ members = ["crates/velt-core", "crates/velt-cli", "crates/velt-server"]
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 authors = ["Adarsh Jagannath"]
 repository = "https://github.com/AdarshJ173/velt"
 homepage = "https://github.com/AdarshJ173/velt"
@@ -22,6 +22,7 @@ rand = "0.8"
 hex = "0.4"
 sha2 = "0.10"
 chacha20poly1305 = { version = "0.11", features = ["zeroize"] }
+aes-siv = { version = "0.8", default-features = false, features = ["alloc", "zeroize"] }
 keyring = { version = "3.6", default-features = false, features = [
     "apple-native",
     "windows-native",

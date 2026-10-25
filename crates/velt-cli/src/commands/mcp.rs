@@ -297,6 +297,7 @@ impl McpServer {
         Ok(json!({
             "vault_id": vault.vault_id_hex(),
             "revision": vault.revision(),
+            "format": vault.format_version(),
             "binding": vault.binding(),
             "keys": keys,
             "missing": missing,

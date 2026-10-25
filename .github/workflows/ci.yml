@@ -24,9 +24,25 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: "Clippy (production paths: no unwrap/expect)"
+        run: cargo clippy --workspace --lib --bins -- -D warnings -D clippy::unwrap_used -D clippy::expect_used
+      - name: Build (locked)
+        run: cargo build --workspace --locked
       - name: Tests (virtual Secret Service)
         run: |
           dbus-run-session -- bash -c '
             eval "$(printf "" | gnome-keyring-daemon --unlock --components=secrets 2>/dev/null)" || true
-            cargo test --workspace
+            cargo test --workspace --locked
           '
+  reproducible:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install keychain build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - name: Reproducible CLI build
+        run: ./scripts/check-reproducible.sh

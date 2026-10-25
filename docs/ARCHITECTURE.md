@@ -40,10 +40,13 @@ flowchart TB
 
 ### Vault
 
-- One `.velt.vault` per project. The file is a binary header plus ChaCha20-Poly1305 ciphertext.
-- The master key is a random 256-bit value stored in the OS credential store under `vault:<vault-id>`.
-- The payload is JSON with a BTreeMap of entries, timestamps, revision, key version, optional team binding, and a SHA-256 checksum.
-- Reads are bounded (16 MiB), require a regular file, and authenticate the header as AAD.
+- One `.velt.vault` per project. Format 2 is a line-oriented UTF-8 file with one AES-256-SIV ciphertext per entry and an independently encrypted team binding.
+- The master key is a random 256-bit value stored in the OS credential store under `vault:<vault-id>`. A 64-byte AES-256-SIV key is derived with HKDF-SHA256.
+- Key names, update timestamps, and expiry are clear text but bound as AEAD associated data. Values and the binding are encrypted.
+- Unchanged entries serialize byte-for-byte identically; there is no global revision or checksum line. Disjoint entries merge with ordinary Git line merging; duplicate names or concurrent edits fail closed.
+- Per-entry AEAD authenticates present entries, not the absence of a deleted line. Completeness relies on Git signatures, a trusted remote, or relay version history.
+- Legacy format 1 (`VELTVLT1`, whole-payload ChaCha20-Poly1305) remains readable and is migrated on the next save.
+- Reads are bounded (16 MiB), require a regular file, and reject unknown or duplicate lines.
 - Writes use a temporary file in the same directory, `fsync`, atomic rename, and 0600 permissions on Unix.
 - `VaultLock` provides an advisory lock in the OS temp directory, keyed by the canonical vault path, for read-modify-write commands.
 
@@ -99,7 +102,8 @@ The child environment is visible to same-user processes on Linux (`/proc/<pid>/e
 
 ## Failure behavior
 
-- Wrong key / tampered ciphertext → authentication failure, no partial plaintext.
+- Wrong key / tampered entry, metadata, or binding → authentication failure, no partial plaintext.
+- Deleted entry line → not detectable by the file alone; signed commits or relay audit history are required.
 - Missing keychain entry → actionable error; recovery shares are the recovery path.
 - Server version conflict → 409, no silent overwrite.
 - Removed member → relay denies future pulls; key rotation is required to invalidate retained ciphertext.

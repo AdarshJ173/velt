@@ -1,21 +1,25 @@
 //! Encrypted vault file format and in-memory vault operations.
 //!
-//! # File layout (format version 1)
+//! # Current line format (format version 2)
+//!
+//! Format 2 is a deterministic, line-oriented, merge-friendly text file. Every
+//! entry is encrypted independently with AES-256-SIV; names stay visible so
+//! Git can merge independent additions line by line. Unchanged entries produce
+//! byte-identical lines across saves.
 //!
 //! ```text
-//! offset  size  field
-//! 0       8     magic "VELTVLT1"
-//! 8       1     format version (1)
-//! 9       3     reserved (zero)
-//! 12      16    vault id (random, generated once)
-//! 28      12    ChaCha20-Poly1305 nonce
-//! 40      ..    ciphertext || Poly1305 tag
+//! VELT-VAULT 2
+//! id <32 hex chars>
+//! created_at <unix seconds>
+//! key_version 1
+//! binding <base64url AES-SIV ciphertext of RemoteBinding JSON>   # optional
+//! ENTRY API_KEY <updated_at> <expires_at|-> <base64url ciphertext>
 //! ```
 //!
-//! The AAD is the first 28 bytes, binding the ciphertext to the magic, format
-//! version and vault id. The plaintext is a JSON payload containing the
-//! key/value map, timestamps, revision, key version, optional team binding and
-//! a SHA-256 checksum over the canonical payload body.
+//! Entry AAD binds the vault id, key version, name, updated_at and expiry.
+//! AES-SIV's deterministic nonce is derived from the vault id and name.
+//! Legacy format 1 (binary `VELTVLT1`) remains readable and is rewritten as
+//! format 2 on the next save.
 //!
 //! Writes are atomic (temporary file in the same directory, fsync, rename) and
 //! the resulting file is mode 0600 on Unix. Plaintext buffers are zeroized
@@ -27,6 +31,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -37,12 +43,15 @@ use crate::secret::SecretValue;
 
 pub const MAGIC: &[u8; 8] = b"VELTVLT1";
 pub const FORMAT_VERSION: u8 = 1;
+pub const TEXT_FORMAT_VERSION: u8 = 2;
+pub const TEXT_MAGIC: &str = "VELT-VAULT 2";
 pub const HEADER_LEN: usize = 40;
 pub const VAULT_ID_LEN: usize = 16;
 pub const MAX_VAULT_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_SECRET_BYTES: usize = 1024 * 1024;
 pub const MAX_NAME_BYTES: usize = 256;
 pub const SCHEMA_VERSION: u32 = 1;
+pub const TEXT_SCHEMA_VERSION: u32 = 2;
 pub const MASTER_KEY_VERSION: u32 = 1;
 
 pub type VaultId = [u8; VAULT_ID_LEN];
@@ -238,6 +247,7 @@ pub struct Vault {
     path: PathBuf,
     pub header: VaultHeader,
     pub payload: VaultPayload,
+    format: u8,
 }
 
 impl Vault {
@@ -251,11 +261,11 @@ impl Vault {
         let timestamp = now_unix();
         let header = VaultHeader { vault_id };
         let payload = VaultPayload {
-            schema: SCHEMA_VERSION,
+            schema: TEXT_SCHEMA_VERSION,
             vault_id: header.vault_id_hex(),
             created_at: timestamp,
             updated_at: timestamp,
-            revision: 0,
+            revision: 1,
             key_version: MASTER_KEY_VERSION,
             entries: BTreeMap::new(),
             binding,
@@ -265,13 +275,31 @@ impl Vault {
             path: path.into(),
             header,
             payload,
+            format: TEXT_FORMAT_VERSION,
         })
     }
 
-    /// Read and decrypt an existing vault.
+    /// Read and decrypt an existing vault (format 1 or format 2).
     pub fn load(path: impl Into<PathBuf>, key: &MasterKey) -> Result<Self> {
         let path = path.into();
         let bytes = read_vault_file(&path)?;
+        if bytes.starts_with(MAGIC) {
+            Self::load_v1(path, &bytes, key)
+        } else if bytes.starts_with(TEXT_MAGIC.as_bytes()) {
+            Self::load_v2(path, &bytes, key)
+        } else {
+            Err(CoreError::InvalidVault(
+                "file has neither a VELTVLT1 nor a VELT-VAULT 2 header".to_owned(),
+            ))
+        }
+    }
+
+    fn load_v1(path: PathBuf, bytes: &[u8], key: &MasterKey) -> Result<Self> {
+        if bytes.len() < HEADER_LEN + crypto::TAG_LEN {
+            return Err(CoreError::InvalidVault(
+                "vault file is truncated".to_owned(),
+            ));
+        }
         let header = parse_header(&bytes[..HEADER_LEN])?;
         let mut nonce = [0u8; crypto::NONCE_LEN];
         nonce.copy_from_slice(&bytes[28..HEADER_LEN]);
@@ -286,29 +314,49 @@ impl Vault {
             path,
             header,
             payload,
+            format: FORMAT_VERSION,
         })
     }
 
-    /// Encrypt and atomically persist the vault.
+    fn load_v2(path: PathBuf, bytes: &[u8], key: &MasterKey) -> Result<Self> {
+        let header = parse_text_header(bytes)?;
+        let payload = decode_text_payload(bytes, header, key)?;
+        Ok(Self {
+            path,
+            header,
+            payload,
+            format: TEXT_FORMAT_VERSION,
+        })
+    }
+
+    /// Encrypt every entry independently and persist the line format.
+    ///
+    /// Saves are atomic and idempotent: unchanged entries serialize to the
+    /// same lines, which keeps Git diffs and three-way merges line-oriented.
     pub fn save(&mut self, key: &MasterKey) -> Result<()> {
-        self.payload.revision = self.payload.revision.saturating_add(1);
-        self.payload.updated_at = now_unix();
-        self.payload.checksum = self.payload.compute_checksum()?;
+        self.payload.schema = TEXT_SCHEMA_VERSION;
+        self.payload.checksum.clear();
+        self.payload.updated_at = self
+            .payload
+            .entries
+            .values()
+            .map(|entry| entry.updated_at)
+            .max()
+            .unwrap_or(self.payload.created_at)
+            .max(self.payload.created_at);
+        if self.payload.revision == 0 {
+            self.payload.revision = 1;
+        }
 
-        let body = Zeroizing::new(serde_json::to_vec(&self.payload)?);
-        let nonce = crypto::random_nonce()?;
-        let ciphertext = crypto::encrypt(key.expose(), &nonce, &self.header.aad(), &body)?;
-        drop(body);
-
-        let mut bytes = Vec::with_capacity(HEADER_LEN + ciphertext.len());
-        bytes.extend_from_slice(MAGIC);
-        bytes.push(FORMAT_VERSION);
-        bytes.extend_from_slice(&[0, 0, 0]);
-        bytes.extend_from_slice(&self.header.vault_id);
-        bytes.extend_from_slice(&nonce);
-        bytes.extend_from_slice(&ciphertext);
-
-        write_atomic(&self.path, &bytes)
+        let bytes = encode_text_vault(&self.payload, &self.header, key)?;
+        if bytes.len() as u64 > MAX_VAULT_BYTES {
+            return Err(CoreError::InvalidVault(format!(
+                "encoded vault exceeds the {MAX_VAULT_BYTES} byte limit"
+            )));
+        }
+        write_atomic(&self.path, &bytes)?;
+        self.format = TEXT_FORMAT_VERSION;
+        Ok(())
     }
 
     pub fn path(&self) -> &Path {
@@ -321,6 +369,11 @@ impl Vault {
 
     pub fn revision(&self) -> u64 {
         self.payload.revision
+    }
+
+    /// On-disk format version (1 legacy, 2 line-oriented).
+    pub fn format_version(&self) -> u8 {
+        self.format
     }
 
     pub fn binding(&self) -> Option<&RemoteBinding> {
@@ -438,7 +491,365 @@ pub fn validate_value(name: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-/// Parse and validate a header.
+fn parse_text_header(bytes: &[u8]) -> Result<VaultHeader> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| CoreError::InvalidVault("vault file is not valid UTF-8".to_owned()))?;
+    let mut lines = text.lines();
+    let first = lines
+        .next()
+        .ok_or_else(|| CoreError::InvalidVault("vault file is empty".to_owned()))?;
+    if first.trim_end() != TEXT_MAGIC {
+        return Err(CoreError::InvalidVault(
+            "missing VELT-VAULT 2 header".to_owned(),
+        ));
+    }
+    let mut id: Option<VaultId> = None;
+    for line in lines {
+        let line = line.trim_end();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("id ") {
+            if id.is_some() {
+                return Err(CoreError::InvalidVault(
+                    "duplicate vault id line".to_owned(),
+                ));
+            }
+            id = Some(parse_vault_id_hex(value)?);
+            break;
+        }
+    }
+    id.map(|vault_id| VaultHeader { vault_id })
+        .ok_or_else(|| CoreError::InvalidVault("vault id is missing".to_owned()))
+}
+
+fn parse_vault_id_hex(value: &str) -> Result<VaultId> {
+    let bytes = hex::decode(value)
+        .map_err(|_| CoreError::InvalidVault("vault id is not valid hex".to_owned()))?;
+    if bytes.len() != VAULT_ID_LEN {
+        return Err(CoreError::InvalidVault(
+            "vault id must be exactly 16 bytes".to_owned(),
+        ));
+    }
+    let mut vault_id = [0u8; VAULT_ID_LEN];
+    vault_id.copy_from_slice(&bytes);
+    Ok(vault_id)
+}
+
+fn validate_text_payload(payload: &VaultPayload, header: &VaultHeader) -> Result<()> {
+    if payload.schema != TEXT_SCHEMA_VERSION {
+        return Err(CoreError::InvalidVault(format!(
+            "cannot write payload schema {} as format 2",
+            payload.schema
+        )));
+    }
+    if payload.vault_id != header.vault_id_hex() {
+        return Err(CoreError::InvalidVault(
+            "payload vault id does not match the file header".to_owned(),
+        ));
+    }
+    if payload.created_at <= 0 {
+        return Err(CoreError::InvalidVault(
+            "created_at must be positive".to_owned(),
+        ));
+    }
+    if payload.key_version != MASTER_KEY_VERSION {
+        return Err(CoreError::UnsupportedVersion {
+            found: payload.key_version.min(u8::MAX as u32) as u8,
+            supported: MASTER_KEY_VERSION as u8,
+        });
+    }
+    if payload.entries.len() > 100_000 {
+        return Err(CoreError::InvalidVault("too many vault entries".to_owned()));
+    }
+    for (name, entry) in &payload.entries {
+        validate_name(name)?;
+        validate_value(name, entry.value.expose())?;
+        if entry.updated_at <= 0 {
+            return Err(CoreError::InvalidVault(format!(
+                "entry {name} has a non-positive updated_at"
+            )));
+        }
+    }
+    if let Some(binding) = &payload.binding {
+        if binding.team_id.is_empty() || binding.environment.is_empty() {
+            return Err(CoreError::InvalidVault(
+                "binding is missing a team id or environment".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn entry_aad(
+    vault_id: &str,
+    key_version: u32,
+    name: &str,
+    updated_at: i64,
+    expires_at: Option<i64>,
+) -> String {
+    let expires = match expires_at {
+        Some(value) => value.to_string(),
+        None => "-".to_owned(),
+    };
+    format!("velt-vault-entry-v2|{vault_id}|{key_version}|{name}|{updated_at}|{expires}")
+}
+
+fn binding_aad(vault_id: &str, key_version: u32) -> String {
+    format!("velt-vault-binding-v2|{vault_id}|{key_version}")
+}
+
+fn encode_text_vault(
+    payload: &VaultPayload,
+    header: &VaultHeader,
+    key: &MasterKey,
+) -> Result<Vec<u8>> {
+    validate_text_payload(payload, header)?;
+    let siv_key = crypto::derive_siv_key(key.expose())?;
+    let id_hex = header.vault_id_hex();
+    let mut out = String::new();
+    out.push_str(TEXT_MAGIC);
+    out.push('\n');
+    out.push_str("id ");
+    out.push_str(&id_hex);
+    out.push('\n');
+    out.push_str("created_at ");
+    out.push_str(&payload.created_at.to_string());
+    out.push('\n');
+    out.push_str("key_version ");
+    out.push_str(&payload.key_version.to_string());
+    out.push('\n');
+
+    if let Some(binding) = &payload.binding {
+        let json = Zeroizing::new(serde_json::to_vec(binding)?);
+        let nonce = crypto::binding_nonce(&header.vault_id);
+        let aad = binding_aad(&id_hex, payload.key_version);
+        let ciphertext = crypto::siv_encrypt(&siv_key, &nonce, aad.as_bytes(), &json)?;
+        out.push_str("binding ");
+        out.push_str(&URL_SAFE_NO_PAD.encode(ciphertext));
+        out.push('\n');
+    }
+
+    for (name, entry) in &payload.entries {
+        validate_name(name)?;
+        validate_value(name, entry.value.expose())?;
+        let nonce = crypto::entry_nonce(&header.vault_id, name);
+        let aad = entry_aad(
+            &id_hex,
+            payload.key_version,
+            name,
+            entry.updated_at,
+            entry.expires_at,
+        );
+        let ciphertext = crypto::siv_encrypt(
+            &siv_key,
+            &nonce,
+            aad.as_bytes(),
+            entry.value.expose().as_bytes(),
+        )?;
+        out.push_str("ENTRY ");
+        out.push_str(name);
+        out.push(' ');
+        out.push_str(&entry.updated_at.to_string());
+        out.push(' ');
+        match entry.expires_at {
+            Some(value) => out.push_str(&value.to_string()),
+            None => out.push('-'),
+        }
+        out.push(' ');
+        out.push_str(&URL_SAFE_NO_PAD.encode(ciphertext));
+        out.push('\n');
+    }
+
+    Ok(out.into_bytes())
+}
+
+fn decode_text_payload(bytes: &[u8], header: VaultHeader, key: &MasterKey) -> Result<VaultPayload> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| CoreError::InvalidVault("vault file is not valid UTF-8".to_owned()))?;
+    let id_hex = header.vault_id_hex();
+    let siv_key = crypto::derive_siv_key(key.expose())?;
+
+    let mut created_at: Option<i64> = None;
+    let mut key_version: Option<u32> = None;
+    let mut binding: Option<RemoteBinding> = None;
+    let mut raw_entries: Vec<(String, i64, Option<i64>, Vec<u8>)> = Vec::new();
+    let mut seen_names = std::collections::BTreeSet::new();
+    let mut seen_id = false;
+
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim_end();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if index == 0 {
+            if line != TEXT_MAGIC {
+                return Err(CoreError::InvalidVault(
+                    "missing VELT-VAULT 2 header".to_owned(),
+                ));
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("id ") {
+            if seen_id {
+                return Err(CoreError::InvalidVault(
+                    "duplicate vault id line".to_owned(),
+                ));
+            }
+            if parse_vault_id_hex(value)? != header.vault_id {
+                return Err(CoreError::InvalidVault(
+                    "vault id line changed while parsing".to_owned(),
+                ));
+            }
+            seen_id = true;
+        } else if let Some(value) = line.strip_prefix("created_at ") {
+            if created_at.is_some() {
+                return Err(CoreError::InvalidVault(
+                    "duplicate created_at line".to_owned(),
+                ));
+            }
+            let parsed = value
+                .parse::<i64>()
+                .map_err(|_| CoreError::InvalidVault("created_at is not an integer".to_owned()))?;
+            if parsed <= 0 {
+                return Err(CoreError::InvalidVault(
+                    "created_at must be positive".to_owned(),
+                ));
+            }
+            created_at = Some(parsed);
+        } else if let Some(value) = line.strip_prefix("key_version ") {
+            if key_version.is_some() {
+                return Err(CoreError::InvalidVault(
+                    "duplicate key_version line".to_owned(),
+                ));
+            }
+            let parsed = value
+                .parse::<u32>()
+                .map_err(|_| CoreError::InvalidVault("key_version is not an integer".to_owned()))?;
+            if parsed != MASTER_KEY_VERSION {
+                return Err(CoreError::UnsupportedVersion {
+                    found: parsed.min(u8::MAX as u32) as u8,
+                    supported: MASTER_KEY_VERSION as u8,
+                });
+            }
+            key_version = Some(parsed);
+        } else if let Some(value) = line.strip_prefix("binding ") {
+            if binding.is_some() {
+                return Err(CoreError::InvalidVault("duplicate binding line".to_owned()));
+            }
+            let ciphertext = URL_SAFE_NO_PAD.decode(value).map_err(|_| {
+                CoreError::InvalidVault("binding ciphertext is not valid base64".to_owned())
+            })?;
+            let nonce = crypto::binding_nonce(&header.vault_id);
+            let aad = binding_aad(&id_hex, MASTER_KEY_VERSION);
+            let plaintext = crypto::siv_decrypt(&siv_key, &nonce, aad.as_bytes(), &ciphertext)?;
+            let parsed: RemoteBinding = serde_json::from_slice(plaintext.as_slice())?;
+            if parsed.team_id.is_empty() || parsed.environment.is_empty() {
+                return Err(CoreError::InvalidVault(
+                    "binding is missing a team id or environment".to_owned(),
+                ));
+            }
+            binding = Some(parsed);
+        } else if let Some(rest) = line.strip_prefix("ENTRY ") {
+            if raw_entries.len() >= 100_000 {
+                return Err(CoreError::InvalidVault("too many vault entries".to_owned()));
+            }
+            let mut parts = rest.splitn(4, ' ');
+            let name = parts
+                .next()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| CoreError::InvalidVault("entry is missing a name".to_owned()))?;
+            validate_name(name)?;
+            let updated = parts
+                .next()
+                .ok_or_else(|| CoreError::InvalidVault("entry is missing updated_at".to_owned()))?;
+            let expected = parts
+                .next()
+                .ok_or_else(|| CoreError::InvalidVault("entry is missing expires_at".to_owned()))?;
+            let encoded = parts
+                .next()
+                .ok_or_else(|| CoreError::InvalidVault("entry is missing ciphertext".to_owned()))?;
+            if encoded.is_empty() {
+                return Err(CoreError::InvalidVault(
+                    "entry ciphertext is empty".to_owned(),
+                ));
+            }
+            if !seen_names.insert(name.to_owned()) {
+                return Err(CoreError::InvalidVault(format!(
+                    "duplicate vault entry {name}"
+                )));
+            }
+            let updated_at = updated.parse::<i64>().map_err(|_| {
+                CoreError::InvalidVault("entry updated_at is not an integer".to_owned())
+            })?;
+            if updated_at <= 0 {
+                return Err(CoreError::InvalidVault(
+                    "entry updated_at must be positive".to_owned(),
+                ));
+            }
+            let expires_at = match expected {
+                "-" => None,
+                other => Some(other.parse::<i64>().map_err(|_| {
+                    CoreError::InvalidVault("entry expires_at is not an integer".to_owned())
+                })?),
+            };
+            let ciphertext = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| {
+                CoreError::InvalidVault("entry ciphertext is not valid base64".to_owned())
+            })?;
+            raw_entries.push((name.to_owned(), updated_at, expires_at, ciphertext));
+        } else {
+            return Err(CoreError::InvalidVault(format!(
+                "unknown vault line: {}",
+                line.chars().take(40).collect::<String>()
+            )));
+        }
+    }
+
+    let created_at = created_at
+        .ok_or_else(|| CoreError::InvalidVault("created_at line is missing".to_owned()))?;
+    key_version.ok_or_else(|| CoreError::InvalidVault("key_version line is missing".to_owned()))?;
+
+    let mut entries = BTreeMap::new();
+    let mut updated_at = created_at;
+    for (name, entry_updated_at, expires_at, ciphertext) in raw_entries {
+        let aad = entry_aad(
+            &id_hex,
+            MASTER_KEY_VERSION,
+            &name,
+            entry_updated_at,
+            expires_at,
+        );
+        let nonce = crypto::entry_nonce(&header.vault_id, &name);
+        let plaintext = crypto::siv_decrypt(&siv_key, &nonce, aad.as_bytes(), &ciphertext)?;
+        let value = std::str::from_utf8(plaintext.as_slice()).map_err(|_| {
+            CoreError::InvalidVault("decrypted entry is not valid UTF-8".to_owned())
+        })?;
+        validate_value(&name, value)?;
+        updated_at = updated_at.max(entry_updated_at);
+        entries.insert(
+            name,
+            Entry {
+                value: SecretValue::from(value.to_owned()),
+                updated_at: entry_updated_at,
+                expires_at,
+            },
+        );
+    }
+
+    Ok(VaultPayload {
+        schema: TEXT_SCHEMA_VERSION,
+        vault_id: id_hex,
+        created_at,
+        updated_at,
+        revision: 1,
+        key_version: MASTER_KEY_VERSION,
+        entries,
+        binding,
+        checksum: String::new(),
+    })
+}
+
+/// Parse and validate a legacy format 1 header.
 pub fn parse_header(bytes: &[u8]) -> Result<VaultHeader> {
     if bytes.len() < HEADER_LEN {
         return Err(CoreError::InvalidVault(
@@ -469,14 +880,21 @@ pub fn parse_header(bytes: &[u8]) -> Result<VaultHeader> {
 
 /// Read the vault id without decrypting the payload.
 pub fn read_vault_id(path: &Path) -> Result<VaultId> {
-    let file = open_vault_file(path)?;
-    let mut header = [0u8; HEADER_LEN];
-    use std::io::Read;
-    let mut reader = std::io::BufReader::new(file);
-    reader
-        .read_exact(&mut header)
-        .map_err(|err| CoreError::io(path, err))?;
-    Ok(parse_header(&header)?.vault_id)
+    let bytes = read_vault_file(path)?;
+    if bytes.starts_with(MAGIC) {
+        if bytes.len() < HEADER_LEN {
+            return Err(CoreError::InvalidVault(
+                "legacy vault header is truncated".to_owned(),
+            ));
+        }
+        Ok(parse_header(&bytes[..HEADER_LEN])?.vault_id)
+    } else if bytes.starts_with(TEXT_MAGIC.as_bytes()) {
+        Ok(parse_text_header(&bytes)?.vault_id)
+    } else {
+        Err(CoreError::InvalidVault(
+            "file has neither a VELTVLT1 nor a VELT-VAULT 2 header".to_owned(),
+        ))
+    }
 }
 
 fn open_vault_file(path: &Path) -> Result<File> {
@@ -492,10 +910,8 @@ fn open_vault_file(path: &Path) -> Result<File> {
             "vault file exceeds the {MAX_VAULT_BYTES} byte limit"
         )));
     }
-    if metadata.len() < (HEADER_LEN + crypto::TAG_LEN) as u64 {
-        return Err(CoreError::InvalidVault(
-            "vault file is truncated".to_owned(),
-        ));
+    if metadata.len() == 0 {
+        return Err(CoreError::InvalidVault("vault file is empty".to_owned()));
     }
     let file = File::open(path).map_err(|err| CoreError::io(path, err))?;
     Ok(file)
@@ -513,10 +929,8 @@ fn read_vault_file(path: &Path) -> Result<Vec<u8>> {
             "vault file grew beyond the size limit while reading".to_owned(),
         ));
     }
-    if bytes.len() < HEADER_LEN + crypto::TAG_LEN {
-        return Err(CoreError::InvalidVault(
-            "vault file is truncated".to_owned(),
-        ));
+    if bytes.is_empty() {
+        return Err(CoreError::InvalidVault("vault file is empty".to_owned()));
     }
     Ok(bytes)
 }
@@ -605,6 +1019,9 @@ fn canonical_lock_target(vault_path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    use std::process::Command;
     use tempfile::TempDir;
 
     fn key() -> MasterKey {
@@ -622,13 +1039,24 @@ mod tests {
         (vault, path)
     }
 
+    fn entry_lines(text: &str) -> Vec<String> {
+        text.lines()
+            .filter(|line| line.starts_with("ENTRY "))
+            .map(str::to_owned)
+            .collect()
+    }
+
     #[test]
     fn create_load_roundtrip() {
         let dir = TempDir::new().unwrap();
         let (created, path) = new_vault(&dir);
-        assert_eq!(created.revision(), 1);
+        assert_eq!(created.format_version(), 2);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("VELT-VAULT 2\n"));
+        assert!(text.contains("ENTRY API_TOKEN "));
 
         let loaded = Vault::load(&path, &key()).unwrap();
+        assert_eq!(loaded.format_version(), 2);
         assert_eq!(loaded.vault_id_hex(), created.vault_id_hex());
         assert_eq!(
             loaded.get("DATABASE_URL").unwrap().value.expose(),
@@ -653,10 +1081,62 @@ mod tests {
     fn tampered_ciphertext_is_rejected() {
         let dir = TempDir::new().unwrap();
         let (_, path) = new_vault(&dir);
-        let mut bytes = fs::read(&path).unwrap();
-        let last = bytes.len() - 1;
-        bytes[last] ^= 0x80;
-        fs::write(&path, &bytes).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let mut changed = false;
+        let lines: Vec<String> = text
+            .lines()
+            .map(|line| {
+                if changed || !line.starts_with("ENTRY API_TOKEN ") {
+                    return line.to_owned();
+                }
+                let fields: Vec<&str> = line
+                    .strip_prefix("ENTRY ")
+                    .unwrap_or_default()
+                    .split(' ')
+                    .collect();
+                if fields.len() != 4 {
+                    return line.to_owned();
+                }
+                let mut ciphertext = URL_SAFE_NO_PAD.decode(fields[3]).unwrap();
+                ciphertext[0] ^= 0x80;
+                changed = true;
+                format!(
+                    "ENTRY {} {} {} {}",
+                    fields[0],
+                    fields[1],
+                    fields[2],
+                    URL_SAFE_NO_PAD.encode(ciphertext)
+                )
+            })
+            .collect();
+        assert!(changed);
+        fs::write(&path, lines.join("\n") + "\n").unwrap();
+        assert!(matches!(
+            Vault::load(&path, &key()),
+            Err(CoreError::AuthenticationFailed)
+        ));
+    }
+
+    #[test]
+    fn tampered_metadata_is_rejected() {
+        let dir = TempDir::new().unwrap();
+        let (_, path) = new_vault(&dir);
+        let text = fs::read_to_string(&path).unwrap();
+        let lines: Vec<String> = text
+            .lines()
+            .map(|line| {
+                if !line.starts_with("ENTRY API_TOKEN ") {
+                    return line.to_owned();
+                }
+                let fields: Vec<&str> = line
+                    .strip_prefix("ENTRY ")
+                    .unwrap_or_default()
+                    .split(' ')
+                    .collect();
+                format!("ENTRY {} 1 {} {}", fields[0], fields[2], fields[3])
+            })
+            .collect();
+        fs::write(&path, lines.join("\n") + "\n").unwrap();
         assert!(matches!(
             Vault::load(&path, &key()),
             Err(CoreError::AuthenticationFailed)
@@ -688,32 +1168,248 @@ mod tests {
     }
 
     #[test]
-    fn nonce_changes_on_every_save() {
+    fn saves_are_deterministic_and_idempotent() {
         let dir = TempDir::new().unwrap();
         let (mut vault, path) = new_vault(&dir);
         let first = fs::read(&path).unwrap();
         vault.save(&key()).unwrap();
         let second = fs::read(&path).unwrap();
-        assert_ne!(first[28..40], second[28..40]);
-        assert_ne!(first, second);
+        assert_eq!(first, second);
+
+        let before = entry_lines(&String::from_utf8(first).unwrap());
+        vault.set("NEW_KEY", "new-value", None).unwrap();
+        vault.save(&key()).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let after = entry_lines(&text);
+        for line in &before {
+            assert!(after.contains(line), "unchanged entry line changed: {line}");
+        }
+        assert!(after.iter().any(|line| line.starts_with("ENTRY NEW_KEY ")));
     }
 
     #[test]
-    fn plaintext_is_wiped_after_parse() {
+    fn duplicate_entries_fail_closed() {
         let dir = TempDir::new().unwrap();
         let (_, path) = new_vault(&dir);
-        let bytes = read_vault_file(&path).unwrap();
-        let header = parse_header(&bytes[..HEADER_LEN]).unwrap();
-        let mut nonce = [0u8; crypto::NONCE_LEN];
-        nonce.copy_from_slice(&bytes[28..HEADER_LEN]);
-        let mut plaintext = Zeroizing::new(Vec::new());
-        plaintext.extend_from_slice(
-            &crypto::decrypt(key().expose(), &nonce, &header.aad(), &bytes[HEADER_LEN..]).unwrap(),
+        let text = fs::read_to_string(&path).unwrap();
+        let duplicate = text
+            .lines()
+            .find(|line| line.starts_with("ENTRY "))
+            .unwrap();
+        fs::write(&path, format!("{text}{duplicate}\n")).unwrap();
+        assert!(matches!(
+            Vault::load(&path, &key()),
+            Err(CoreError::InvalidVault(_))
+        ));
+    }
+
+    #[test]
+    fn values_never_appear_in_plaintext() {
+        let dir = TempDir::new().unwrap();
+        let (_, path) = new_vault(&dir);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("token-value"));
+        assert!(!text.contains("postgres://localhost/app"));
+        assert!(text.contains("DATABASE_URL"));
+        assert!(text.contains("API_TOKEN"));
+    }
+
+    #[test]
+    fn binding_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let binding = RemoteBinding {
+            team_id: "team-1".to_owned(),
+            environment: "production".to_owned(),
+            epoch: 2,
+            base_version: 7,
+            base_checksum: Some("00".repeat(32)),
+        };
+        let path = dir.path().join(".velt.vault");
+        let mut vault = Vault::new(&path, Some(binding.clone())).unwrap();
+        vault.set("KEY", "value", None).unwrap();
+        vault.save(&key()).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("team-1"));
+        let loaded = Vault::load(&path, &key()).unwrap();
+        assert_eq!(loaded.binding(), Some(&binding));
+    }
+
+    #[test]
+    fn stale_v1_vault_is_migrated_on_save() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".velt.vault");
+        let vault_id = [3u8; VAULT_ID_LEN];
+        let header = VaultHeader { vault_id };
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "LEGACY_KEY".to_owned(),
+            Entry {
+                value: SecretValue::from("legacy-value"),
+                updated_at: now_unix(),
+                expires_at: None,
+            },
         );
-        assert!(plaintext.windows(8).any(|window| window == b"DATABASE"));
-        let payload = parse_payload(&mut plaintext, header).unwrap();
-        assert!(plaintext.is_empty(), "plaintext buffer must be wiped");
-        assert_eq!(payload.entries.len(), 2);
+        let mut payload = VaultPayload {
+            schema: SCHEMA_VERSION,
+            vault_id: header.vault_id_hex(),
+            created_at: now_unix(),
+            updated_at: now_unix(),
+            revision: 1,
+            key_version: MASTER_KEY_VERSION,
+            entries,
+            binding: None,
+            checksum: String::new(),
+        };
+        payload.checksum = payload.compute_checksum().unwrap();
+        let body = Zeroizing::new(serde_json::to_vec(&payload).unwrap());
+        let nonce = crypto::random_nonce().unwrap();
+        let ciphertext = crypto::encrypt(key().expose(), &nonce, &header.aad(), &body).unwrap();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        bytes.push(FORMAT_VERSION);
+        bytes.extend_from_slice(&[0, 0, 0]);
+        bytes.extend_from_slice(&vault_id);
+        bytes.extend_from_slice(&nonce);
+        bytes.extend_from_slice(&ciphertext);
+        fs::write(&path, bytes).unwrap();
+
+        let mut vault = Vault::load(&path, &key()).unwrap();
+        assert_eq!(vault.format_version(), 1);
+        assert_eq!(
+            vault.get("LEGACY_KEY").unwrap().value.expose(),
+            "legacy-value"
+        );
+        vault.save(&key()).unwrap();
+        assert_eq!(vault.format_version(), 2);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("VELT-VAULT 2\n"));
+        let reloaded = Vault::load(&path, &key()).unwrap();
+        assert_eq!(
+            reloaded.get("LEGACY_KEY").unwrap().value.expose(),
+            "legacy-value"
+        );
+    }
+
+    #[test]
+    fn disjoint_branches_merge_with_git() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("base.vault");
+        let mut vault = Vault::new(&base, None).unwrap();
+        vault.set("MIDDLE_A", "a", None).unwrap();
+        vault.set("MIDDLE_Z", "z", None).unwrap();
+        vault.save(&key()).unwrap();
+
+        let left = dir.path().join("left.vault");
+        let right = dir.path().join("right.vault");
+        fs::copy(&base, &left).unwrap();
+        fs::copy(&base, &right).unwrap();
+
+        let mut left_vault = Vault::load(&left, &key()).unwrap();
+        left_vault.set("ALPHA", "left", None).unwrap();
+        left_vault.save(&key()).unwrap();
+        let mut right_vault = Vault::load(&right, &key()).unwrap();
+        right_vault.set("ZULU", "right", None).unwrap();
+        right_vault.save(&key()).unwrap();
+
+        let output = Command::new("git")
+            .args([
+                "merge-file",
+                "-p",
+                left.to_str().unwrap(),
+                base.to_str().unwrap(),
+                right.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git merge-file failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let merged = dir.path().join("merged.vault");
+        fs::write(&merged, &output.stdout).unwrap();
+
+        let loaded = Vault::load(&merged, &key()).unwrap();
+        for name in ["ALPHA", "MIDDLE_A", "MIDDLE_Z", "ZULU"] {
+            assert!(loaded.get(name).is_some(), "missing merged key {name}");
+        }
+    }
+
+    #[test]
+    fn known_answer_vector() {
+        let key = MasterKey::from_slice(&[0x42; 32]).unwrap();
+        let header = VaultHeader {
+            vault_id: [0x11; VAULT_ID_LEN],
+        };
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "API_KEY".to_owned(),
+            Entry {
+                value: SecretValue::from("secret-value"),
+                updated_at: 1_700_000_001,
+                expires_at: None,
+            },
+        );
+        let payload = VaultPayload {
+            schema: TEXT_SCHEMA_VERSION,
+            vault_id: header.vault_id_hex(),
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_001,
+            revision: 1,
+            key_version: MASTER_KEY_VERSION,
+            entries,
+            binding: None,
+            checksum: String::new(),
+        };
+        let text = String::from_utf8(encode_text_vault(&payload, &header, &key).unwrap()).unwrap();
+        assert_eq!(
+            text,
+            "VELT-VAULT 2\n\
+             id 11111111111111111111111111111111\n\
+             created_at 1700000000\n\
+             key_version 1\n\
+             ENTRY API_KEY 1700000001 - APFtI1nW4Wke0QsGolKTP17vcZN6DibnldrfSQ\n"
+        );
+    }
+
+    #[test]
+    fn duplicate_id_line_fails_closed() {
+        let dir = TempDir::new().unwrap();
+        let (_, path) = new_vault(&dir);
+        let text = fs::read_to_string(&path).unwrap();
+        let id_line = text.lines().find(|line| line.starts_with("id ")).unwrap();
+        fs::write(&path, format!("{text}{id_line}\n")).unwrap();
+        assert!(matches!(
+            Vault::load(&path, &key()),
+            Err(CoreError::InvalidVault(_))
+        ));
+    }
+
+    #[test]
+    fn unknown_lines_fail_closed() {
+        let dir = TempDir::new().unwrap();
+        let (_, path) = new_vault(&dir);
+        let text = fs::read_to_string(&path).unwrap();
+        fs::write(&path, format!("{text}NOT-A-VAULT-LINE\n")).unwrap();
+        assert!(matches!(
+            Vault::load(&path, &key()),
+            Err(CoreError::InvalidVault(_))
+        ));
+    }
+
+    #[test]
+    fn unsupported_key_version_fails_closed() {
+        let dir = TempDir::new().unwrap();
+        let (_, path) = new_vault(&dir);
+        let text = fs::read_to_string(&path).unwrap();
+        fs::write(&path, text.replace("key_version 1", "key_version 2")).unwrap();
+        assert!(matches!(
+            Vault::load(&path, &key()),
+            Err(CoreError::UnsupportedVersion { .. })
+        ));
     }
 
     #[test]
@@ -744,15 +1440,12 @@ mod tests {
     }
 
     #[test]
-    fn revision_increases() {
+    fn adding_entry_preserves_existing_entries_on_reload() {
         let dir = TempDir::new().unwrap();
         let (mut vault, path) = new_vault(&dir);
-        assert_eq!(vault.revision(), 1);
         vault.set("NEW", "value", None).unwrap();
         vault.save(&key()).unwrap();
-        assert_eq!(vault.revision(), 2);
         let loaded = Vault::load(&path, &key()).unwrap();
-        assert_eq!(loaded.revision(), 2);
         assert_eq!(loaded.entries().len(), 3);
     }
 
