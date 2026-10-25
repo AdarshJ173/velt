@@ -71,7 +71,7 @@ async fn call(
     let value = if text.trim().is_empty() {
         Value::Null
     } else {
-        serde_json::from_str(&text).unwrap_or_else(|_| Value::String(text))
+        serde_json::from_str(&text).unwrap_or(Value::String(text))
     };
     (status, value)
 }
@@ -127,6 +127,7 @@ async fn login(client: &Client, base: &str, username: &str, ssh: &PrivateKey) ->
     response["token"].as_str().unwrap().to_owned()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn push(
     client: &Client,
     base: &str,
@@ -611,8 +612,23 @@ fn relay_end_to_end() {
             .timeout(Duration::from_secs(15))
             .build()
             .unwrap();
-        let login = no_redirect
+        let confirm = no_redirect
             .get(format!("{base}{login_path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(confirm.status(), StatusCode::OK);
+        let confirm_html = confirm.text().await.unwrap();
+        assert!(confirm_html.contains("Continue to dashboard"));
+        let token = login_path.split_once("token=").unwrap().1;
+
+        let login = no_redirect
+            .post(format!("{base}/dashboard/login"))
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body(format!("token={token}"))
             .send()
             .await
             .unwrap();
@@ -631,7 +647,12 @@ fn relay_end_to_end() {
 
         // A one-time link cannot be replayed.
         let replay = no_redirect
-            .get(format!("{base}{login_path}"))
+            .post(format!("{base}/dashboard/login"))
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body(format!("token={token}"))
             .send()
             .await
             .unwrap();
@@ -673,6 +694,22 @@ fn relay_end_to_end() {
             .starts_with("text/csv"));
         let csv_body = csv.text().await.unwrap();
         assert!(csv_body.contains("key_rotated"));
+
+        // Logout revokes the dashboard session, not just the browser cookie.
+        let logout = no_redirect
+            .post(format!("{base}/dashboard/logout"))
+            .header(reqwest::header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(logout.status(), StatusCode::SEE_OTHER);
+        let after_logout = no_redirect
+            .get(format!("{base}/dashboard"))
+            .header(reqwest::header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(after_logout.status(), StatusCode::SEE_OTHER);
 
         // The owner can read the audit trail and delete the team.
         let (status, audit) = call(

@@ -252,10 +252,10 @@ fn audit_value(name: &str, value: &str, now: i64, findings: &mut Vec<Finding>) {
 
     if trimmed.contains("-----BEGIN") && trimmed.contains("PRIVATE KEY-----") {
         findings.push(Finding::new(
-            Severity::Error,
+            Severity::Warning,
             "inline_private_key",
             name,
-            "value contains inline private key material; store it in a file or a dedicated secret store",
+            "value contains inline private key material; confirm the consumer expects PEM in an environment variable",
         ));
     }
 
@@ -482,10 +482,8 @@ pub fn audit_directory(directory: &Path, now: i64) -> Vec<Finding> {
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name == ".env" || name.starts_with(".env.") {
-            if env_files.len() < 20 {
-                env_files.push(path);
-            }
+        if (name == ".env" || name.starts_with(".env.")) && env_files.len() < 20 {
+            env_files.push(path);
         }
     }
 
@@ -586,6 +584,14 @@ fn audit_env_file(path: &Path, now: i64, findings: &mut Vec<Finding>) {
                 "plaintext_placeholder",
                 subject.as_str(),
                 "plaintext env file contains a placeholder value",
+            ));
+        }
+        if value.contains("-----BEGIN") && value.contains("PRIVATE KEY-----") {
+            findings.push(Finding::new(
+                Severity::Error,
+                "plaintext_private_key",
+                subject.as_str(),
+                "private key material is stored in a plaintext file; move it into the encrypted vault",
             ));
         }
         if let Some(kind) = credential_format(value) {
@@ -722,6 +728,18 @@ mod tests {
         );
         let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3MDAwMDAwMDB9.signature";
         assert_eq!(classify(jwt, None, now), SecretStatus::Expired);
+    }
+
+    #[test]
+    fn inline_private_key_is_a_warning_in_the_vault() {
+        let findings = audit(&[(
+            "KEY",
+            "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+        )]);
+        assert!(findings
+            .iter()
+            .any(|finding| finding.code == "inline_private_key"
+                && finding.severity == Severity::Warning));
     }
 
     #[test]

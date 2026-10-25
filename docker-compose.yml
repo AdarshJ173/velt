@@ -1,0 +1,34 @@
+# Local evaluation stack. Do not use these credentials in production.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: velt
+      POSTGRES_PASSWORD: velt-dev-password
+      POSTGRES_DB: velt
+    volumes:
+      - velt-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U velt -d velt"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  velt:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    environment:
+      DATABASE_URL: postgres://velt:velt-dev-password@postgres:5432/velt
+      VELT_BIND: 0.0.0.0:8080
+      VELT_PUBLIC_URL: http://127.0.0.1:8080
+      RUST_LOG: info,sqlx=warn,tower_http=info
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  velt-postgres:

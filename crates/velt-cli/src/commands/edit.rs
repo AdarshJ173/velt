@@ -218,7 +218,7 @@ impl App {
             }
             KeyCode::Char('a') | KeyCode::Char('n') => self.start_new(),
             KeyCode::Char('e') | KeyCode::Enter => self.start_edit(),
-            KeyCode::Char('d') if self.vault.entries().len() > 0 => {
+            KeyCode::Char('d') if !self.vault.entries().is_empty() => {
                 self.mode = Mode::ConfirmDelete;
             }
             KeyCode::Char('r') => self.reveal = !self.reveal,

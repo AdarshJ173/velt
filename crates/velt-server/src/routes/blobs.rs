@@ -86,7 +86,7 @@ pub async fn push_blob(
     .0;
 
     util::insert_audit(
-        &mut *transaction,
+        &mut transaction,
         team_id,
         Some(user.id),
         "vault_pushed",
@@ -152,7 +152,7 @@ pub async fn pull_blob(
 
     let mut connection = state.db.acquire().await?;
     util::insert_audit(
-        &mut *connection,
+        &mut connection,
         team_id,
         Some(user.id),
         "vault_pulled",

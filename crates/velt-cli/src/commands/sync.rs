@@ -6,6 +6,7 @@ use std::io::Write;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use base64::Engine;
 use serde_json::json;
+use tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
 use velt_core::sync::TeamPayload;
 use velt_core::vault::{RemoteBinding, Vault};
@@ -432,8 +433,16 @@ fn watch(cli: &Cli) -> Result<i32> {
         .api
         .token()
         .ok_or_else(|| CliError::msg("no session token available"))?;
-    let url = session.api.websocket_url(team_id, token);
-    let (mut socket, _) = tungstenite::connect(url)
+    let url = session.api.websocket_url(team_id);
+    let mut request = url
+        .into_client_request()
+        .map_err(|error| CliError::msg(format!("invalid WebSocket request: {error}")))?;
+    request.headers_mut().insert(
+        tungstenite::http::header::AUTHORIZATION,
+        tungstenite::http::HeaderValue::from_str(&format!("Bearer {token}"))
+            .map_err(|error| CliError::msg(format!("invalid session token: {error}")))?,
+    );
+    let (mut socket, _) = tungstenite::connect(request)
         .map_err(|error| CliError::msg(format!("WebSocket connection failed: {error}")))?;
     if !cli.json {
         output.text(&format!(

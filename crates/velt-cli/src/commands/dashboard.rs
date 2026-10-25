@@ -26,7 +26,7 @@ pub fn execute(cli: &Cli) -> Result<i32> {
         output.text("Dashboard login link (single use, expires in 5 minutes):");
         output.text(&url);
         output.text("");
-        output.text("Open it in a browser on this machine. The dashboard can manage members and audit access, but never decrypts secrets.");
+        output.text("Open it in a browser on this machine and press Continue. The dashboard can manage members and audit access, but never decrypts secrets.");
     }
     Ok(0)
 }

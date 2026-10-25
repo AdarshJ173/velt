@@ -29,7 +29,7 @@ uuid.workspace = true
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1.48", features = ["full"] }
 tower-http = { version = "0.6", features = ["trace", "request-id", "limit", "catch-panic", "timeout"] }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "time", "migrate", "json", "macros"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "time", "migrate", "json", "macros", "tls-rustls-ring"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 dotenvy = "0.15"

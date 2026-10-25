@@ -1,0 +1,5 @@
+# Example TLS termination. Set VELT_PUBLIC_URL=https://sync.example.com.
+sync.example.com {
+    encode zstd gzip
+    reverse_proxy velt:8080
+}

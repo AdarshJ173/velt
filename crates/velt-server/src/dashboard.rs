@@ -39,6 +39,11 @@ struct LoginQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct LoginForm {
+    token: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct CsrfForm {
     csrf: String,
 }
@@ -65,7 +70,7 @@ pub fn api_router() -> Router<AppState> {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/dashboard", get(home))
-        .route("/dashboard/login", get(login))
+        .route("/dashboard/login", get(login).post(login_submit))
         .route("/dashboard/logout", post(logout))
         .route("/dashboard/teams/{team_id}", get(team_page))
         .route(
@@ -116,6 +121,40 @@ async fn login(State(state): State<AppState>, Query(query): Query<LoginQuery>) -
             login_body(None),
         );
     };
+    let hash = util::sha256(token.as_bytes()).to_vec();
+    let valid = sqlx::query_as::<_, (i32,)>(
+        "SELECT 1 FROM dashboard_tokens
+         WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()",
+    )
+    .bind(hash)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+    if valid.is_none() {
+        return render_page(
+            StatusCode::UNAUTHORIZED,
+            "Dashboard login",
+            login_body(Some(
+                "This link is invalid, expired, or has already been used.",
+            )),
+        );
+    }
+    render_page(
+        StatusCode::OK,
+        "Dashboard login",
+        login_confirm_body(&token),
+    )
+}
+
+async fn login_submit(State(state): State<AppState>, Form(form): Form<LoginForm>) -> Response {
+    let token = form.token;
+    if token.is_empty() || token.len() > 256 {
+        return render_page(
+            StatusCode::UNAUTHORIZED,
+            "Dashboard login",
+            login_body(Some("This link is invalid.")),
+        );
+    }
     let hash = util::sha256(token.as_bytes()).to_vec();
     let mut transaction = match state.db.begin().await {
         Ok(transaction) => transaction,
@@ -334,7 +373,7 @@ async fn team_page(
                 esc(&user.csrf)
             ));
         } else {
-            body.push_str("—");
+            body.push('—');
         }
         body.push_str("</td></tr>");
     }
@@ -497,7 +536,7 @@ async fn remove_member(
         return error_page("Could not revoke member");
     }
     let _ = util::insert_audit(
-        &mut *transaction,
+        &mut transaction,
         team_id,
         Some(user.id),
         "member_removed",
@@ -543,7 +582,7 @@ async fn audit_csv(
             csv_escape(event.actor_username.as_deref().unwrap_or("system")),
             csv_escape(&event.action),
             csv_escape(event.subject.as_deref().unwrap_or("")),
-            csv_escape(&event.metadata.to_string()).replace('"', "\"\"")
+            csv_escape(&event.metadata.to_string())
         ));
     }
     let mut response = (StatusCode::OK, csv).into_response();
@@ -558,7 +597,13 @@ async fn audit_csv(
     security_headers(response)
 }
 
-async fn logout() -> Response {
+async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Some(token) = cookie_token(&headers) {
+        let _ = sqlx::query("DELETE FROM dashboard_sessions WHERE token_hash = $1")
+            .bind(util::sha256(token.as_bytes()).to_vec())
+            .execute(&state.db)
+            .await;
+    }
     let mut response = Redirect::to("/dashboard/login").into_response();
     response.headers_mut().insert(
         SET_COOKIE,
@@ -617,6 +662,13 @@ fn selected(current: &str, candidate: &str) -> &'static str {
     } else {
         ""
     }
+}
+
+fn login_confirm_body(token: &str) -> String {
+    format!(
+        "<main class=\"narrow\"><h1>Continue to dashboard</h1><p>This is a single-use login link. Confirm to create an 8-hour browser session.</p><form method=\"post\" action=\"/dashboard/login\"><input type=\"hidden\" name=\"token\" value=\"{}\"><button type=\"submit\">Continue</button></form><p class=\"muted\">The link expires five minutes after it is minted. The dashboard never receives secret values or team keys.</p></main>",
+        esc(token)
+    )
 }
 
 fn login_body(error: Option<&str>) -> String {

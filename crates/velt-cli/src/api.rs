@@ -223,6 +223,20 @@ impl ApiClient {
                 "server URL must start with http:// or https://".to_owned(),
             ));
         }
+        if let Some(rest) = base.strip_prefix("http://") {
+            let authority = rest.split('/').next().unwrap_or(rest);
+            let host = if let Some(ipv6) = authority.strip_prefix('[') {
+                ipv6.split(']').next().unwrap_or(ipv6)
+            } else {
+                authority.split(':').next().unwrap_or(authority)
+            };
+            if !matches!(host, "localhost" | "127.0.0.1" | "::1") {
+                return Err(CliError::Config(
+                    "refusing plaintext HTTP to a non-loopback relay; use https:// (or run a local relay for development)"
+                        .to_owned(),
+                ));
+            }
+        }
         let http = Client::builder()
             .timeout(Duration::from_secs(20))
             .user_agent(format!("velt/{}", env!("CARGO_PKG_VERSION")))
@@ -382,6 +396,7 @@ impl ApiClient {
         Ok(serde_json::from_value(value)?)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn push_blob(
         &self,
         team_id: Uuid,
@@ -472,7 +487,7 @@ impl ApiClient {
         Ok(serde_json::from_value(value)?)
     }
 
-    pub fn websocket_url(&self, team_id: Uuid, token: &str) -> String {
+    pub fn websocket_url(&self, team_id: Uuid) -> String {
         let base = self
             .base
             .strip_prefix("https://")
@@ -483,6 +498,6 @@ impl ApiClient {
                     .map(|rest| format!("ws://{rest}"))
             })
             .unwrap_or_else(|| self.base.clone());
-        format!("{base}/v1/teams/{team_id}/events?token={token}")
+        format!("{base}/v1/teams/{team_id}/events")
     }
 }

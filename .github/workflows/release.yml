@@ -1,0 +1,60 @@
+name: release
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: velt-linux-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: velt-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: velt-windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p velt -p velt-server
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist/${{ matrix.archive }}
+          cp target/${{ matrix.target }}/release/velt dist/${{ matrix.archive }}/
+          cp target/${{ matrix.target }}/release/velt-server dist/${{ matrix.archive }}/
+          tar -C dist -czf dist/${{ matrix.archive }}.tar.gz ${{ matrix.archive }}
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist/${{ matrix.archive }}" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/velt.exe" "dist/${{ matrix.archive }}/"
+          Copy-Item "target/${{ matrix.target }}/release/velt-server.exe" "dist/${{ matrix.archive }}/"
+          Compress-Archive -Path "dist/${{ matrix.archive }}" -DestinationPath "dist/${{ matrix.archive }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: ignore

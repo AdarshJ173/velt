@@ -56,7 +56,7 @@ pub struct TeamIdentity {
 impl TeamIdentity {
     pub fn generate() -> Result<Self> {
         let secret = crypto::random_key()?;
-        Ok(Self::from_secret(&secret[..])?)
+        Self::from_secret(&secret[..])
     }
 
     pub fn from_secret(bytes: &[u8]) -> Result<Self> {

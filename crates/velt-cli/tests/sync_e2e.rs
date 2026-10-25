@@ -179,6 +179,21 @@ fn cli_sync_end_to_end() {
     run_json(&mut alice);
 
     let mut alice = velt(&alice_config);
+    alice.current_dir(&alice_dir).args(["--json", "schema"]);
+    let schema = run_json(&mut alice);
+    assert!(schema["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|key| key["name"] == "API_KEY"));
+
+    let mut docs = velt(&alice_config);
+    docs.args(["--llm-docs"]);
+    let output = run(&mut docs);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("velt inspect"));
+
+    let mut alice = velt(&alice_config);
     alice.current_dir(&alice_dir).args([
         "--json",
         "sync",

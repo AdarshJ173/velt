@@ -88,7 +88,7 @@ pub async fn create_team(
     .await?;
 
     util::insert_envelope(
-        &mut *transaction,
+        &mut transaction,
         request.team_id,
         user.id,
         envelope.epoch,
@@ -99,7 +99,7 @@ pub async fn create_team(
     .await?;
 
     util::insert_audit(
-        &mut *transaction,
+        &mut transaction,
         request.team_id,
         Some(user.id),
         "team_created",
@@ -220,7 +220,7 @@ pub async fn invite_member(
             .bind(&username)
             .fetch_optional(&state.db)
             .await?
-            .ok_or_else(|| ApiError::NotFound)?;
+            .ok_or(ApiError::NotFound)?;
 
     let mut transaction = state.db.begin().await?;
     let insert = sqlx::query(
@@ -244,7 +244,7 @@ pub async fn invite_member(
     }
 
     util::insert_envelope(
-        &mut *transaction,
+        &mut transaction,
         team_id,
         target.0,
         envelope.epoch,
@@ -254,7 +254,7 @@ pub async fn invite_member(
     )
     .await?;
     util::insert_audit(
-        &mut *transaction,
+        &mut transaction,
         team_id,
         Some(user.id),
         "member_added",
@@ -320,7 +320,7 @@ pub async fn update_member(
 
     let mut connection = state.db.acquire().await?;
     util::insert_audit(
-        &mut *connection,
+        &mut connection,
         team_id,
         Some(user.id),
         "member_updated",
@@ -364,7 +364,7 @@ pub async fn remove_member(
         .execute(&mut *transaction)
         .await?;
     util::insert_audit(
-        &mut *transaction,
+        &mut transaction,
         team_id,
         Some(user.id),
         "member_removed",
@@ -429,7 +429,7 @@ pub async fn rotate_key(
     .fetch_optional(&mut *transaction)
     .await?
     .ok_or(ApiError::NotFound)?;
-    let caller = util::membership_conn(&mut *transaction, team_id, user.id)
+    let caller = util::membership_conn(&mut transaction, team_id, user.id)
         .await?
         .ok_or(ApiError::Forbidden)?;
     util::require_owner(&caller, &team, user.id)?;
@@ -576,7 +576,7 @@ pub async fn rotate_key(
         .await?;
 
     util::insert_audit(
-        &mut *transaction,
+        &mut transaction,
         team_id,
         Some(user.id),
         "key_rotated",
