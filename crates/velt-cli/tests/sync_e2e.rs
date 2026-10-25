@@ -179,6 +179,43 @@ fn cli_sync_end_to_end() {
         .write_stdin("alice-secret-123456");
     run_json(&mut alice);
 
+    // Signed custom rule packs are applied and verified end-to-end.
+    let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+    let rule_bytes = br#"{"version":1,"rules":[{"id":"alice-secret","pattern":"^alice-secret","severity":"error","message":"integration rule"}]}"#;
+    let signature = velt_core::rules::sign(rule_bytes, &signing_key);
+    let rules_path = alice_dir.join("rules.json");
+    let signature_path = alice_dir.join("rules.sig");
+    fs::write(&rules_path, rule_bytes).unwrap();
+    fs::write(&signature_path, hex::encode(signature)).unwrap();
+    let mut alice = velt(&alice_config);
+    alice.current_dir(&alice_dir).args([
+        "--json",
+        "audit",
+        "--no-files",
+        "--rules",
+        rules_path.to_str().unwrap(),
+        "--rules-signature",
+        signature_path.to_str().unwrap(),
+        "--rules-public-key",
+        &hex::encode(signing_key.verifying_key().to_bytes()),
+    ]);
+    let output = run(&mut alice);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "signed custom rule should fail audit: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let findings: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        findings["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["code"] == "custom_rule"),
+        "custom rule finding missing: {findings}"
+    );
+
     let mut alice = velt(&alice_config);
     alice.current_dir(&alice_dir).args(["--json", "schema"]);
     let schema = run_json(&mut alice);
