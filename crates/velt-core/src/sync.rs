@@ -99,6 +99,7 @@ impl std::fmt::Debug for TeamIdentity {
 pub struct SealedTeamKey {
     pub recipient: String,
     pub epoch: u32,
+    #[serde(rename = "ephemeral_public_key")]
     pub ephemeral_public: String,
     pub nonce: String,
     pub ciphertext: String,
@@ -349,6 +350,10 @@ impl EncryptedTeamPayload {
 
     pub fn checksum_hex(&self) -> String {
         hex::encode(self.checksum)
+    }
+
+    pub fn checksum_base64(&self) -> String {
+        b64_encode(&self.checksum)
     }
 }
 
